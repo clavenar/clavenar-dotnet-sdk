@@ -179,7 +179,36 @@ internal static class Transport
             StringList(obj["reasons"]),
             StringList(obj["review_reasons"]),
             AsString(obj["intent_category"]) ?? string.Empty,
-            AsString(obj["layer"]));
+            AsString(obj["layer"]),
+            ParseVerdictDetail(obj["detail"]));
+    }
+
+    // Parse the optional verbose-verdict breakdown. Lenient: a missing or
+    // malformed block yields null (the gateway omits it unless
+    // CLAVENAR_PROXY_VERBOSE_VERDICTS=true).
+    private static VerdictDetail? ParseVerdictDetail(JsonNode? node)
+    {
+        if (node is not JsonObject obj || obj["detectors"] is not JsonArray rawDetectors)
+        {
+            return null;
+        }
+
+        var detectors = new List<DetectorScore>();
+        foreach (var item in rawDetectors)
+        {
+            if (item is not JsonObject d
+                || AsString(d["detector"]) is not string name
+                || d["score"] is not JsonValue sv
+                || !sv.TryGetValue<double>(out var score))
+            {
+                continue;
+            }
+
+            var flagged = d["flagged"] is JsonValue fv && fv.TryGetValue<bool>(out var f) && f;
+            detectors.Add(new DetectorScore(name, score, flagged));
+        }
+
+        return new VerdictDetail(detectors, StringList(obj["degraded"]));
     }
 
     private static Verdict ParsePending(string body, string? corr)

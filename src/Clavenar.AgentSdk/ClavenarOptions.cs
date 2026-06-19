@@ -32,6 +32,12 @@ public sealed record ClavenarOptions
     /// <summary>Fires (observe mode only) when an inspection fails at the transport layer.</summary>
     public Func<ClavenarTransportException, VerdictContext, CancellationToken, Task>? OnPolicyError { get; init; }
 
+    /// <summary>
+    /// Developer mode: render the gateway's verbose-verdict detail to stderr on a denied call before
+    /// throwing. Off by default. Dev/staging only — detailed denials are an attacker oracle.
+    /// </summary>
+    public bool DevMode { get; init; }
+
     internal HttpClient EffectiveClient => HttpClient ?? SharedClient;
 
     internal void Validate()

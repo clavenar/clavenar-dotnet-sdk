@@ -14,7 +14,8 @@ public sealed class Verdict
         IReadOnlyList<string> reasons,
         IReadOnlyList<string> reviewReasons,
         string intentCategory,
-        string? layer)
+        string? layer,
+        VerdictDetail? detail = null)
     {
         Kind = kind;
         CorrelationId = correlationId;
@@ -22,6 +23,7 @@ public sealed class Verdict
         ReviewReasons = reviewReasons;
         IntentCategory = intentCategory;
         Layer = layer;
+        Detail = detail;
     }
 
     public VerdictKind Kind { get; }
@@ -37,4 +39,7 @@ public sealed class Verdict
 
     /// <summary>The stage that produced a deny when reported, else null.</summary>
     public string? Layer { get; }
+
+    /// <summary>The verbose-verdict per-detector breakdown when the gateway opts in, else null.</summary>
+    public VerdictDetail? Detail { get; }
 }

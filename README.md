@@ -65,6 +65,46 @@ enforce mode, to exceptions rooted at `ClavenarException`:
 | `ClavenarTransportException` | clavenar unreachable / unexpected response — `Status` (0 = network) |
 | `ClavenarConfigException` | bad options, or a model tool call with unparseable arguments |
 
+## Debugging a denial
+
+`ClavenarDeniedException` carries `Reasons`, `Layer`, and `CorrelationId`.
+To see *which detector* fired, run the gateway with
+`CLAVENAR_PROXY_VERBOSE_VERDICTS=true` (Lite: `--verbose-verdicts`) — the
+deny then carries a per-detector `Detail` breakdown, and the SDK renders
+it to stderr when you set `DevMode = true`:
+
+```csharp
+var opts = new ClavenarOptions
+{
+    Endpoint = "https://clavenar.internal",
+    DevMode = true, // dev/staging only — detailed denials are an attacker oracle
+};
+// On a deny, the SDK prints a panel to stderr:
+//   ━━ clavenar denied: send_email ━━
+//     layer=brain  intent=Exfiltration  correlation=abc-123
+//     detectors:
+//       persona_drift         0.12
+//       injection             0.91  ⚠ flagged
+//     degraded: injection
+```
+
+Programmatic access (no `DevMode` needed):
+
+```csharp
+catch (ClavenarDeniedException e)
+{
+    if (e.Detail is not null)
+    {
+        foreach (var d in e.Detail.Detectors)
+            if (d.Flagged || d.Score >= 0.5)
+                Console.WriteLine($"fired: {d.Detector} ({d.Score:0.00})");
+    }
+}
+```
+
+`Detail` is null unless the gateway opts in; without it the panel prints a
+hint. `DevMode.RenderDenyPanel(e)` returns the string directly.
+
 ## Enforce vs observe
 
 ```csharp

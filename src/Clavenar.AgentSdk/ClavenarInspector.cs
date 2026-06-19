@@ -94,9 +94,15 @@ public sealed class ClavenarInspector
             switch (verdict.Kind)
             {
                 case VerdictKind.Deny:
-                    throw new ClavenarDeniedException(
+                    var denied = new ClavenarDeniedException(
                         call.Name, verdict.Reasons, verdict.ReviewReasons, verdict.IntentCategory,
-                        verdict.Layer, verdict.CorrelationId);
+                        verdict.Layer, verdict.CorrelationId, verdict.Detail);
+                    if (_opts.DevMode)
+                    {
+                        DevMode.EmitDenyPanel(denied);
+                    }
+
+                    throw denied;
                 case VerdictKind.Pending:
                     var corr = verdict.CorrelationId!;
                     throw new ClavenarPendingException(

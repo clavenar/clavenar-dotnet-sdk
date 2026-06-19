@@ -11,7 +11,8 @@ public sealed class ClavenarDeniedException : ClavenarException
         IReadOnlyList<string> reviewReasons,
         string intentCategory,
         string? layer,
-        string? correlationId)
+        string? correlationId,
+        VerdictDetail? detail = null)
         : base($"clavenar denied tool \"{toolName}\": {string.Join(" | ", reasons)}")
     {
         ToolName = toolName;
@@ -20,6 +21,7 @@ public sealed class ClavenarDeniedException : ClavenarException
         IntentCategory = intentCategory;
         Layer = layer;
         CorrelationId = correlationId;
+        Detail = detail;
     }
 
     public string ToolName { get; }
@@ -35,4 +37,7 @@ public sealed class ClavenarDeniedException : ClavenarException
 
     /// <summary>clavenar's correlation id for the audit ledger when reported, else null.</summary>
     public string? CorrelationId { get; }
+
+    /// <summary>The verbose-verdict per-detector breakdown when the gateway opts in, else null.</summary>
+    public VerdictDetail? Detail { get; }
 }

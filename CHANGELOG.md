@@ -3,6 +3,15 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/) and
 the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0]
+
+### Added
+
+- **Dev-mode deny rendering.** Setting `ClavenarOptions.DevMode = true`
+  writes a readable per-detector panel to stderr when a tool call is
+  denied; `DevMode.RenderDenyPanel(e)` returns the same string directly.
+  Dev/staging only — detailed denials are an attacker oracle.
+
 ## [1.0.0]
 
 Initial release. .NET port of the Clavenar agent-wrapper SDK,

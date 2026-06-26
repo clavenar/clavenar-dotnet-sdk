@@ -1,0 +1,63 @@
+<!-- public repo — do not add internal topology, secrets, deploy/runbook, strategy, or absolute host paths -->
+# clavenar-dotnet-sdk — agent-side wrapper SDK (NuGet `Clavenar.AgentSdk`, net8.0): inspects every tool call before it runs
+
+Wrap your Anthropic / OpenAI client; every tool call a model emits is inspected
+by a Clavenar gateway against your policies *before* your agent executes it.
+Sibling of the TypeScript (`@clavenar/agent-sdk`) and Python
+(`clavenar-agent-sdk`) wrappers — same wire contract. `docs/PARITY.md` maps the
+TS reference 1:1.
+
+## Build, test, lint
+```
+dotnet restore
+dotnet build -c Release            # --no-restore in CI
+dotnet format --verify-no-changes  # CI gates on this; run dotnet format to fix
+dotnet test -c Release             # --no-build in CI
+```
+Pinned to the .NET 8 SDK via `global.json` (`rollForward: latestFeature`). CI
+runs the matrix on ubuntu / windows / macos, plus an `sbom` job
+(`dotnet list package --vulnerable --include-transitive` + CycloneDX). Tag
+`v<X.Y.Z>` matching csproj `<Version>` triggers the NuGet publish workflow.
+
+Run: library, no binary. The shippable package is
+`src/Clavenar.AgentSdk/Clavenar.AgentSdk.csproj`; tests in
+`tests/Clavenar.AgentSdk.Tests/`. Public API entry points:
+`new ClavenarInspector(opts)` then `InspectAsync` / `InspectAllAsync` /
+`EnforceAsync`, and the static facade `Clavenar.InspectResponseAsync(response,
+opts)`. The SDK is an HTTP *client* of the gateway (example `Endpoint =
+"http://localhost:8088"`); it does not listen on a port.
+
+## Layout
+- `src/Clavenar.AgentSdk/` — the package. Key files:
+  - `ClavenarInspector.cs` — main surface: `InspectAsync`, `InspectAllAsync`, `EnforceAsync`, `InspectResponseAsync`, `PollPendingOnceAsync`.
+  - `Clavenar.cs` — static `InspectResponseAsync` facade (wrap-and-forget over a provider response).
+  - `ClavenarOptions.cs` — config; `Endpoint` is `required`, plus `Token`, `Mode`, `DevMode`, `OnVerdict`/`OnPolicyError`, `Timeout`, retry/resolve knobs.
+  - `Transport.cs` — `System.Text.Json` HTTP transport; `Verdict.cs` / `VerdictKind.cs` / `VerdictDetail.cs` / `VerdictContext.cs` — verdict model.
+  - `NormalizedToolCall.cs` — normalized `{name, id, arguments}`; throws `ClavenarConfigException` on unparseable args JSON.
+  - `StreamGate.cs` — holds a tool call's closing event until a verdict returns (`Start`/`Update`/`CloseAsync`, `CloseByPrefixAsync`).
+  - `Realtime.cs` — `Realtime.InspectAsync(FunctionCallDone, opts)` for realtime function-call events.
+  - `DevMode.cs` / `Mode.cs` — stderr deny panel + enforce/observe enum.
+  - `ClavenarException.cs` + `ClavenarDeniedException` / `ClavenarPendingException` / `ClavenarTransportException` / `ClavenarConfigException`.
+- `tests/Clavenar.AgentSdk.Tests/` — xUnit; `InternalsVisibleTo` grants internal access. `StubHandler.cs` / `Fixtures.cs` back transport tests.
+- `examples/` — `semantic-kernel`, `native-openai`, `custom-dispatcher`, `realtime` (not packed/shipped).
+- `docs/` — `SEQUENCES.md` (streaming/pending flows), `PARITY.md` (TS map).
+
+## Conventions & invariants
+- **Inspect before execute.** Every model `tool_use` must clear inspection before the agent runs it — that ordering is the SDK's whole contract. Don't add a path that dispatches a tool ahead of a verdict.
+- **Duck-typing shape guard.** `InspectResponseAsync` duck-types an Anthropic message (`content[]` with `type:"tool_use"`) or an OpenAI completion (`choices[].message.tool_calls[]`) via JSON. A non-null provider response that yields *zero* extracted calls is a shape mismatch worth guarding, not a silent allow — treat an unrecognized response as a contract error, never as "nothing to inspect."
+- **No provider dependency.** Only the in-box `System.Text.Json`. Never add a PackageReference to the OpenAI/Anthropic SDKs — duck-type the JSON instead. Keeps the supply-chain surface minimal.
+- **Fail-closed.** In enforce `Mode`, a transport failure throws `ClavenarTransportException` (`Status == 0` = network); it must not fall through to allow. `Mode.Observe` is the only non-blocking path — verdicts via `OnVerdict`, errors via `OnPolicyError`.
+- **Verdict → exception mapping is load-bearing.** `Allow`/`Deny`/`Pending` from `InspectAsync`; enforce/batch paths raise `ClavenarDeniedException` (carries `Reasons`, `Layer`, `IntentCategory`, `CorrelationId`, optional per-detector `Detail`), `ClavenarPendingException` (`await ResolveAsync()`), `ClavenarTransportException`, `ClavenarConfigException`.
+- **`DevMode = true` is dev/staging only.** It renders the detailed deny panel (per-detector scores) to stderr; detailed denials are an attacker oracle in prod. `Detail` is null unless the gateway opts in (`CLAVENAR_PROXY_VERBOSE_VERDICTS=true`).
+- **No secrets at rest.** Hold only `Endpoint` + optional bearer `Token`, supplied per process by the caller.
+
+C# / .NET rules that bite here:
+- `TreatWarningsAsErrors=true` + `EnableNETAnalyzers=true` — warnings fail the build; fix the code, don't suppress.
+- `Nullable=enable`, `ImplicitUsings=disable` — annotate nullability; write explicit `using`s.
+- `dotnet format --verify-no-changes` is a CI gate. Follow `.editorconfig`: 4-space C#, brace-on-new-line; 2-space for csproj/json/yml; LF, final newline.
+- Public types/members carry XML doc comments (`GenerateDocumentationFile=true`; only CS1591 is waived).
+- Anything in a `public` signature must itself be `public` (option/verdict/exception types are part of the surface).
+- Bump csproj `<Version>` for any shipped change; the release tag must equal it or the publish job fails.
+
+## Pointers
+README.md · SECURITY.md · CONTRIBUTING.md · docs/SEQUENCES.md · docs/PARITY.md

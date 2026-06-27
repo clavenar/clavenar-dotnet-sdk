@@ -16,6 +16,7 @@ Python, and .NET SDKs:
 | Inspect-all | concurrent inspect, **submission-order** first-deny; `OnVerdict` before any deny→throw |
 | Enforce | first deny → `ClavenarDeniedException`, pending → `ClavenarPendingException`; transport error fails closed, `OnPolicyError` not called |
 | Observe | nothing blocks; per-call transport failure → `OnPolicyError`, treated as allowed |
+| Response extraction | `InspectResponseAsync` duck-types Anthropic `content[]` (`type:"tool_use"`) or OpenAI `choices[].message.tool_calls[]` (filtered to `type:"function"`); zero extracted calls → no-op (text-only response) |
 | Streaming | closing event held until verdict; empty args → `{}`; unparseable drained args → `ClavenarConfigException` |
 | Resolve | poll `GET /pending/{id}` every 2s, ceiling 10m; deny → `ClavenarDeniedException` (`IntentCategory="PendingDenied"`, reason = decider note or `"operator denied"`); 401/404 terminal; 5xx/network swallowed |
 | OpenAI non-streaming, unparseable args | `ClavenarConfigException` (matches TS, not Python's raw-string fallback) |

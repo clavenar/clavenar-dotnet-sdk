@@ -27,6 +27,36 @@ How the SDK behaves on each wire path. It is a client of
    `ClavenarPendingException`. Observe never throws; a per-call transport
    failure fires `OnPolicyError` and is treated as allowed.
 
+## Response extraction — `InspectResponseAsync`
+
+`ClavenarInspector.InspectResponseAsync` (and the static
+`Clavenar.InspectResponseAsync` facade over it) is the headline,
+wrap-and-forget entry point: hand it a whole provider response and it
+inspects every tool call the model emitted, with no provider SDK
+dependency.
+
+1. Serialize the response object to a JSON tree
+   (`JsonSerializer.SerializeToNode`) — the shape is duck-typed, so any
+   object that serializes to the expected JSON works.
+2. `ExtractCalls` walks the tree for whichever shape it recognizes:
+   - **Anthropic** — a `content[]` array; each block with
+     `type:"tool_use"` becomes a `NormalizedToolCall` from its `id` /
+     `name` / `input` (the `input` node is deep-cloned).
+   - **OpenAI** — a `choices[]` array; each
+     `choices[].message.tool_calls[]` entry **filtered to
+     `type:"function"`** becomes a `NormalizedToolCall` from its `id` /
+     `function.name` / `function.arguments` (arguments are a
+     JSON-encoded string, parsed via
+     `NormalizedToolCall.FromJsonArguments`).
+3. The extracted calls are forwarded to `InspectAllAsync`, so the
+   submission-order, fail-closed enforce semantics from **Batch inspect**
+   apply unchanged.
+
+A text-only response carries no `tool_use` / `tool_calls`, so
+`ExtractCalls` returns an empty list and `InspectAllAsync` early-returns
+on `calls.Count == 0` — a silent no-op. That is the correct outcome: a
+model turn with nothing to run has nothing to gate.
+
 ## Streaming gate — `StreamGate`
 
 Driven from the streaming loop:

@@ -1,5 +1,5 @@
 <!-- public repo — do not add internal topology, secrets, deploy/runbook, strategy, or absolute host paths -->
-# clavenar-dotnet-sdk — agent-side wrapper SDK (NuGet `Clavenar.AgentSdk`, net8.0): inspects every tool call before it runs
+# clavenar-dotnet-sdk — agent-side wrapper SDK (NuGet `Clavenar.AgentSdk`, net8.0)
 
 Wrap your Anthropic / OpenAI client; every tool call a model emits is inspected
 by a Clavenar gateway against your policies *before* your agent executes it.
@@ -31,7 +31,7 @@ opts)`. The SDK is an HTTP *client* of the gateway (example `Endpoint =
 - `src/Clavenar.AgentSdk/` — the package. Key files:
   - `ClavenarInspector.cs` — main surface: `InspectAsync`, `InspectAllAsync`, `EnforceAsync`, `InspectResponseAsync`, `PollPendingOnceAsync`.
   - `Clavenar.cs` — static `InspectResponseAsync` facade (wrap-and-forget over a provider response).
-  - `ClavenarOptions.cs` — config; `Endpoint` is `required`, plus `Token`, `Mode`, `DevMode`, `OnVerdict`/`OnPolicyError`, `Timeout`, retry/resolve knobs.
+  - `ClavenarOptions.cs` — config; `Endpoint` is `required`, plus `Token`, `Mode`, `DevMode`, `OnVerdict`/`OnPolicyError`, `Timeout`, `HttpClient`, and `Retry` (`RetryOptions`). Resolve tuning is separate — `ResolveOptions` passed to `ClavenarPendingException.ResolveAsync`.
   - `Transport.cs` — `System.Text.Json` HTTP transport; `Verdict.cs` / `VerdictKind.cs` / `VerdictDetail.cs` / `VerdictContext.cs` — verdict model.
   - `NormalizedToolCall.cs` — normalized `{name, id, arguments}`; throws `ClavenarConfigException` on unparseable args JSON.
   - `StreamGate.cs` — holds a tool call's closing event until a verdict returns (`Start`/`Update`/`CloseAsync`, `CloseByPrefixAsync`).

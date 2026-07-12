@@ -55,13 +55,15 @@ await Clavenar.InspectResponseAsync(completion, opts); // throws on a denied too
 ## Verdicts and the error model
 
 `ClavenarInspector.InspectAsync` returns a `Verdict`
-(`Allow` / `Deny` / `Pending`). The batch / enforce paths translate, in
-enforce mode, to exceptions rooted at `ClavenarException`:
+(`Allow` / `Deny` / `Pending` / `RateLimited`). The batch / enforce
+paths translate, in enforce mode, to exceptions rooted at
+`ClavenarException`:
 
 | Exception | Meaning |
 |---|---|
 | `ClavenarDeniedException` | policy rejected the call — `ToolName`, `Reasons`, `ReviewReasons`, `IntentCategory`, `Layer`, `CorrelationId` |
 | `ClavenarPendingException` | parked for human review — `await ResolveAsync()` to block until decided |
+| `ClavenarRateLimitedException` | gateway rejected the call before evaluation — `Code` (`rate_limited` velocity gate / `quota_exceeded` spend gate), `RetryAfterSecs` (null on `quota_exceeded`) |
 | `ClavenarTransportException` | clavenar unreachable / unexpected response — `Status` (0 = network) |
 | `ClavenarConfigException` | bad options, or a model tool call with unparseable arguments |
 

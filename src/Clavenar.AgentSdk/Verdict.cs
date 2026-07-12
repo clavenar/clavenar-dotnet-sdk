@@ -15,7 +15,9 @@ public sealed class Verdict
         IReadOnlyList<string> reviewReasons,
         string intentCategory,
         string? layer,
-        VerdictDetail? detail = null)
+        VerdictDetail? detail = null,
+        string? rateLimitCode = null,
+        int? retryAfterSecs = null)
     {
         Kind = kind;
         CorrelationId = correlationId;
@@ -24,6 +26,8 @@ public sealed class Verdict
         IntentCategory = intentCategory;
         Layer = layer;
         Detail = detail;
+        RateLimitCode = rateLimitCode;
+        RetryAfterSecs = retryAfterSecs;
     }
 
     public VerdictKind Kind { get; }
@@ -42,4 +46,14 @@ public sealed class Verdict
 
     /// <summary>The verbose-verdict per-detector breakdown when the gateway opts in, else null.</summary>
     public VerdictDetail? Detail { get; }
+
+    /// <summary>
+    /// Which gate fired when <see cref="Kind"/> is <see cref="VerdictKind.RateLimited"/>:
+    /// <c>"rate_limited"</c> (request-velocity) or <c>"quota_exceeded"</c> (per-tenant spend).
+    /// Null for every other kind.
+    /// </summary>
+    public string? RateLimitCode { get; }
+
+    /// <summary>Seconds to wait before retrying when the gateway reports it, else null.</summary>
+    public int? RetryAfterSecs { get; }
 }

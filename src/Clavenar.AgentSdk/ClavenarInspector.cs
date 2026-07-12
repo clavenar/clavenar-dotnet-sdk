@@ -39,8 +39,9 @@ public sealed class ClavenarInspector
 
     /// <summary>
     /// Inspect a batch concurrently and, in enforce mode, throw the first
-    /// <see cref="ClavenarDeniedException"/> / <see cref="ClavenarPendingException"/> in submission
-    /// order. Observe mode never blocks; a per-call transport failure fires OnPolicyError.
+    /// <see cref="ClavenarDeniedException"/> / <see cref="ClavenarPendingException"/> /
+    /// <see cref="ClavenarRateLimitedException"/> in submission order. Observe mode never blocks;
+    /// a per-call transport failure fires OnPolicyError.
     /// </summary>
     public async Task InspectAllAsync(
         IReadOnlyList<NormalizedToolCall> calls, CancellationToken cancellationToken = default)
@@ -109,6 +110,10 @@ public sealed class ClavenarInspector
                     throw new ClavenarPendingException(
                         call.Name, corr, verdict.ReviewReasons,
                         c => Transport.PollPendingOnceAsync(corr, _opts, c));
+                case VerdictKind.RateLimited:
+                    throw new ClavenarRateLimitedException(
+                        call.Name, verdict.RateLimitCode!, verdict.Reasons, verdict.RetryAfterSecs,
+                        verdict.Layer, verdict.CorrelationId);
                 default:
                     break;
             }

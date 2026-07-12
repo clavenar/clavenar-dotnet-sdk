@@ -84,6 +84,60 @@ public class TransportTests
     }
 
     [Fact]
+    public async Task RateLimitedWithRetryAfter()
+    {
+        int n = 0;
+        const string body =
+            "{\"verdict\":\"rate_limited\",\"layer\":\"proxy\",\"error\":\"rate_limited\",\"reasons\":[\"agent request velocity exceeded\"],\"correlation_id\":\"c-429\",\"retry_after_secs\":17}";
+        var h = new StubHandler((_, _) =>
+        {
+            n++;
+            return StubResponse.Of(429, body);
+        });
+        var v = await Inspect(Fixtures.Opts(h) with { Retry = new RetryOptions(3, TimeSpan.FromMilliseconds(1)) });
+        Assert.Equal(VerdictKind.RateLimited, v.Kind);
+        Assert.Equal("rate_limited", v.RateLimitCode);
+        Assert.Equal(17, v.RetryAfterSecs);
+        Assert.Equal("proxy", v.Layer);
+        Assert.Equal(new[] { "agent request velocity exceeded" }, v.Reasons);
+        Assert.Equal("c-429", v.CorrelationId);
+
+        // A 429 is a verdict, not a transient failure — exactly one attempt.
+        Assert.Equal(1, n);
+    }
+
+    [Fact]
+    public async Task QuotaExceededWithoutRetryAfter()
+    {
+        const string body =
+            "{\"verdict\":\"quota_exceeded\",\"layer\":\"proxy\",\"error\":\"quota_exceeded\",\"reasons\":[\"tenant monthly spend cap reached\"]}";
+        var h = new StubHandler((_, _) => StubResponse.Of(429, body));
+        var v = await Inspect(Fixtures.Opts(h));
+        Assert.Equal(VerdictKind.RateLimited, v.Kind);
+        Assert.Equal("quota_exceeded", v.RateLimitCode);
+        Assert.Null(v.RetryAfterSecs);
+    }
+
+    [Fact]
+    public async Task RateLimitedHeaderWinsOverBodyCorrelation()
+    {
+        const string body = "{\"error\":\"rate_limited\",\"correlation_id\":\"cb\"}";
+        var h = new StubHandler((_, _) => new StubResponse { Status = 429, Body = body, CorrelationId = "ch" });
+        var v = await Inspect(Fixtures.Opts(h));
+        Assert.Equal("ch", v.CorrelationId);
+        Assert.Equal("rate_limited", v.RateLimitCode);
+        Assert.Empty(v.Reasons);
+    }
+
+    [Fact]
+    public async Task RateLimitedBadShapeIsTransport()
+    {
+        var h = new StubHandler((_, _) => StubResponse.Of(429, "{\"wrong\":\"shape\"}"));
+        var e = await Assert.ThrowsAsync<ClavenarTransportException>(() => Inspect(Fixtures.Opts(h)));
+        Assert.Equal(429, e.Status);
+    }
+
+    [Fact]
     public async Task UnexpectedStatus()
     {
         var h = new StubHandler((_, _) => StubResponse.Of(500, "boom"));

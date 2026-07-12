@@ -14,5 +14,6 @@ Console.WriteLine(v.Kind switch
 {
     VerdictKind.Deny => $"deny {evt.Name}: {string.Join(", ", v.Reasons)}",
     VerdictKind.Pending => $"pending {evt.Name} ({v.CorrelationId})",
+    VerdictKind.RateLimited => $"rate limited {evt.Name}: {string.Join(", ", v.Reasons)}",
     _ => $"allow — dispatch {evt.Name}",
 });

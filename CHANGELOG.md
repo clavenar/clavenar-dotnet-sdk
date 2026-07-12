@@ -7,6 +7,14 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- 429 rate-limit verdicts. An HTTP 429 from the gateway now parses into
+  a `VerdictKind.RateLimited` verdict carrying the gate code
+  (`rate_limited` request-velocity or `quota_exceeded` per-tenant
+  spend), the gateway's `reasons`, and the optional `retry_after_secs`,
+  instead of collapsing into a generic transport error. Enforce mode
+  throws the new `ClavenarRateLimitedException`; observe mode passes the
+  call through and surfaces the verdict via `OnVerdict`. Like 403, a
+  429 is a verdict — the transport never retries it.
 - Shape-drift signal: `InspectResponseAsync` on a response whose
   `stop_reason` / `finish_reason` declares tool use but from which zero
   tool calls were extracted emits a `Trace.TraceWarning` — extraction

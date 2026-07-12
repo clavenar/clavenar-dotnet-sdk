@@ -103,6 +103,56 @@ public class InspectorTests
     }
 
     [Fact]
+    public async Task RateLimitedEnforce()
+    {
+        const string body =
+            "{\"verdict\":\"rate_limited\",\"layer\":\"proxy\",\"error\":\"rate_limited\",\"reasons\":[\"agent request velocity exceeded\"],\"retry_after_secs\":30}";
+        var h = new StubHandler((_, _) => new StubResponse { Status = 429, Body = body, CorrelationId = "c-429" });
+        var e = await Assert.ThrowsAsync<ClavenarRateLimitedException>(
+            () => new ClavenarInspector(Fixtures.Opts(h)).InspectAllAsync(new[] { Fixtures.SampleCall() }));
+        Assert.Equal("delete_user", e.ToolName);
+        Assert.Equal("rate_limited", e.Code);
+        Assert.Equal(new[] { "agent request velocity exceeded" }, e.Reasons);
+        Assert.Equal(30, e.RetryAfterSecs);
+        Assert.Equal("proxy", e.Layer);
+        Assert.Equal("c-429", e.CorrelationId);
+        Assert.Equal("clavenar rate_limited for tool \"delete_user\" (retry after 30s)", e.Message);
+    }
+
+    [Fact]
+    public async Task QuotaExceededEnforce()
+    {
+        const string body =
+            "{\"verdict\":\"quota_exceeded\",\"layer\":\"proxy\",\"error\":\"quota_exceeded\",\"reasons\":[\"tenant monthly spend cap reached\"]}";
+        var h = new StubHandler((_, _) => StubResponse.Of(429, body));
+        var e = await Assert.ThrowsAsync<ClavenarRateLimitedException>(
+            () => new ClavenarInspector(Fixtures.Opts(h)).EnforceAsync("delete_user", "call_1", "{}"));
+        Assert.Equal("quota_exceeded", e.Code);
+        Assert.Null(e.RetryAfterSecs);
+        Assert.Equal("clavenar quota_exceeded for tool \"delete_user\"", e.Message);
+    }
+
+    [Fact]
+    public async Task ObservePassesThroughRateLimited()
+    {
+        var kinds = new List<VerdictKind>();
+        const string body =
+            "{\"verdict\":\"rate_limited\",\"error\":\"rate_limited\",\"reasons\":[\"agent request velocity exceeded\"],\"retry_after_secs\":30}";
+        var h = new StubHandler((_, _) => StubResponse.Of(429, body));
+        var opts = Fixtures.Opts(h) with
+        {
+            Mode = Mode.Observe,
+            OnVerdict = (v, _, _) =>
+            {
+                kinds.Add(v.Kind);
+                return Task.CompletedTask;
+            },
+        };
+        await new ClavenarInspector(opts).InspectAllAsync(new[] { Fixtures.SampleCall() });
+        Assert.Equal(new[] { VerdictKind.RateLimited }, kinds);
+    }
+
+    [Fact]
     public async Task OnVerdictErrorPropagates()
     {
         var h = new StubHandler((_, _) => StubResponse.Of(200));

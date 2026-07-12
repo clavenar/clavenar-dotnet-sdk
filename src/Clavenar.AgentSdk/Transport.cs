@@ -82,6 +82,7 @@ internal static class Transport
                     VerdictKind.Allow, corr, Array.Empty<string>(), Array.Empty<string>(), string.Empty, null),
                 403 => ParseDeny(body, corr),
                 202 => ParsePending(body, corr),
+                429 => ParseRateLimited(body, corr),
                 _ => throw new ClavenarTransportException(UnexpectedMsg("inspect", status, body), status),
             };
         }
@@ -209,6 +210,41 @@ internal static class Transport
         }
 
         return new VerdictDetail(detectors, StringList(obj["degraded"]));
+    }
+
+    // Lenient like the deny parser: only the string `error` code is required; the verdict falls
+    // back to rate_limited when the body omits it (both codes ride HTTP 429).
+    private static Verdict ParseRateLimited(string body, string? corr)
+    {
+        JsonObject? obj;
+        try
+        {
+            obj = JsonNode.Parse(body) as JsonObject;
+        }
+        catch (JsonException e)
+        {
+            throw new ClavenarTransportException($"clavenar 429 with unparseable body: {e.Message}", 429);
+        }
+
+        if (obj is null || AsString(obj["error"]) is null)
+        {
+            throw new ClavenarTransportException($"clavenar 429 with unexpected body shape: {body}", 429);
+        }
+
+        string code = AsString(obj["verdict"]) == "quota_exceeded" ? "quota_exceeded" : "rate_limited";
+        int? retryAfterSecs =
+            obj["retry_after_secs"] is JsonValue rv && rv.TryGetValue<int>(out var secs) ? secs : null;
+        string? id = !string.IsNullOrEmpty(corr) ? corr : AsString(obj["correlation_id"]);
+        return new Verdict(
+            VerdictKind.RateLimited,
+            id,
+            StringList(obj["reasons"]),
+            Array.Empty<string>(),
+            string.Empty,
+            AsString(obj["layer"]),
+            null,
+            code,
+            retryAfterSecs);
     }
 
     private static Verdict ParsePending(string body, string? corr)

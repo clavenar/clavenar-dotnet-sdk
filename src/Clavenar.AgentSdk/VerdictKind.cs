@@ -6,4 +6,5 @@ public enum VerdictKind
     Allow,
     Deny,
     Pending,
+    RateLimited,
 }

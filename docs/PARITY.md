@@ -12,7 +12,8 @@ Python, and .NET SDKs:
 | 200 | allow; `X-Clavenar-Correlation-Id` surfaced when present |
 | 403 | deny; missing `reasons`/`review_reasons` → empty, missing `intent_category` → `""`; non-string `error` → transport error |
 | 202 | pending; `CorrelationId = header ?? body`, both empty → transport error |
-| Retry | network + 5xx retry up to `MaxAttempts` (default 3); full-jitter backoff `base*2^attempt*(0.5+rand*0.5)`, base 100ms; 200/403/other-4xx never retry; timeout 10s |
+| 429 | rate-limit verdict, exactly one attempt (never retried); string `error` required else transport error; `verdict` → `rate_limited` unless exactly `quota_exceeded`; missing `reasons` → empty; `retry_after_secs` surfaced when present; `CorrelationId = header ?? body`; enforce → `ClavenarRateLimitedException`, observe → `OnVerdict` with `VerdictKind.RateLimited` |
+| Retry | network + 5xx retry up to `MaxAttempts` (default 3); full-jitter backoff `base*2^attempt*(0.5+rand*0.5)`, base 100ms; 200/403/429/other-4xx never retry; timeout 10s |
 | Inspect-all | concurrent inspect, **submission-order** first-deny; `OnVerdict` before any deny→throw |
 | Enforce | first deny → `ClavenarDeniedException`, pending → `ClavenarPendingException`; transport error fails closed, `OnPolicyError` not called |
 | Observe | nothing blocks; per-call transport failure → `OnPolicyError`, treated as allowed |

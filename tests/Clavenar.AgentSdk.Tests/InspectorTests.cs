@@ -2,6 +2,8 @@ namespace Clavenar.AgentSdk.Tests;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
 public class InspectorTests
@@ -160,5 +162,63 @@ public class InspectorTests
         var e = await Assert.ThrowsAsync<ClavenarDeniedException>(
             () => new ClavenarInspector(Fixtures.Opts(h)).InspectResponseAsync(resp));
         Assert.Equal("delete_user", e.ToolName);
+    }
+
+    // Provider-shape drift: the turn declares tool use but the blocks aren't extractable. The
+    // call must pass through without hitting the gateway (fail-open by contract) while the
+    // shape-drift trace warning fires.
+    [Fact]
+    public async Task InspectResponseWarnsWhenToolUseDeclaredButNothingExtracted()
+    {
+        var h = new StubHandler((_, _) => throw new InvalidOperationException(
+            "gateway must not be contacted when extraction yields zero calls"));
+        object resp = new
+        {
+            stop_reason = "tool_use",
+            content = new object[]
+            {
+                new { type = "tool_use_v2", id = "toolu_1", name = "delete_user", input = new { } },
+            },
+        };
+        var listener = new CollectingTraceListener();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            await new ClavenarInspector(Fixtures.Opts(h)).InspectResponseAsync(resp);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
+
+        Assert.Contains(listener.Messages, m => m.Contains("may have drifted"));
+    }
+
+    [Theory]
+    [InlineData("{\"stop_reason\":\"tool_use\"}", true)]
+    [InlineData("{\"choices\":[{\"finish_reason\":\"tool_calls\"}]}", true)]
+    [InlineData("{\"stop_reason\":\"end_turn\"}", false)]
+    [InlineData("{\"choices\":[{\"finish_reason\":\"stop\"}]}", false)]
+    [InlineData("{}", false)]
+    public void DeclaresToolUseMatchesProviderStopMarkers(string json, bool expected)
+    {
+        Assert.Equal(expected, ClavenarInspector.DeclaresToolUse(JsonNode.Parse(json)));
+    }
+
+    private sealed class CollectingTraceListener : TraceListener
+    {
+        public List<string> Messages { get; } = new();
+
+        public override void Write(string? message)
+        {
+        }
+
+        public override void WriteLine(string? message)
+        {
+            if (message is not null)
+            {
+                Messages.Add(message);
+            }
+        }
     }
 }

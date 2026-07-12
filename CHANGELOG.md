@@ -3,6 +3,16 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/) and
 the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Shape-drift signal: `InspectResponseAsync` on a response whose
+  `stop_reason` / `finish_reason` declares tool use but from which zero
+  tool calls were extracted emits a `Trace.TraceWarning` — extraction
+  stays a no-op for text-only turns, but silent provider-shape drift is
+  now visible.
+
 ## [1.1.0]
 
 ### Added

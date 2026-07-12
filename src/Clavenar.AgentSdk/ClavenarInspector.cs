@@ -2,6 +2,7 @@ namespace Clavenar.AgentSdk;
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -134,7 +135,16 @@ public sealed class ClavenarInspector
     {
         ArgumentNullException.ThrowIfNull(response);
         var tree = JsonSerializer.SerializeToNode(response);
-        return InspectAllAsync(ExtractCalls(tree), cancellationToken);
+        var calls = ExtractCalls(tree);
+        if (calls.Count == 0 && DeclaresToolUse(tree))
+        {
+            Trace.TraceWarning(
+                "clavenar: response declares tool use (stop_reason/finish_reason) but no tool calls"
+                + " were extracted — the provider response shape may have drifted; tool calls were"
+                + " NOT inspected");
+        }
+
+        return InspectAllAsync(calls, cancellationToken);
     }
 
     private async Task<Outcome> InspectOutcomeAsync(NormalizedToolCall call, CancellationToken ct)
@@ -189,6 +199,33 @@ public sealed class ClavenarInspector
         }
 
         return calls;
+    }
+
+    /// <summary>True when the provider marked the turn as tool-calling, whatever the content shape.</summary>
+    internal static bool DeclaresToolUse(JsonNode? tree)
+    {
+        if (tree is null)
+        {
+            return false;
+        }
+
+        if (Str(tree["stop_reason"]) == "tool_use")
+        {
+            return true;
+        }
+
+        if (tree["choices"] is JsonArray choices)
+        {
+            foreach (var choice in choices)
+            {
+                if (choice is JsonObject co && Str(co["finish_reason"]) == "tool_calls")
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static string? Str(JsonNode? node) =>

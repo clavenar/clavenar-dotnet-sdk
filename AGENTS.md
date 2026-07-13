@@ -58,6 +58,7 @@ C# / .NET rules that bite here:
 - Public types/members carry XML doc comments (`GenerateDocumentationFile=true`; only CS1591 is waived).
 - Anything in a `public` signature must itself be `public` (option/verdict/exception types are part of the surface).
 - Bump csproj `<Version>` for any shipped change; the release tag must equal it or the publish job fails.
+- Commit subjects must start with a lowercase letter.
 
 ## Pointers
 README.md · SECURITY.md · CONTRIBUTING.md · docs/SEQUENCES.md · docs/PARITY.md

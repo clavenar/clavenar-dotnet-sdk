@@ -43,6 +43,7 @@ opts)`. The SDK is an HTTP *client* of the gateway (example `Endpoint =
 - `docs/` — `SEQUENCES.md` (streaming/pending flows), `PARITY.md` (TS map).
 
 ## Conventions & invariants
+- After adding or updating a feature, also update the relevant `MANUAL_TESTS*` file(s) when needed.
 - **Inspect before execute.** Every model `tool_use` must clear inspection before the agent runs it — that ordering is the SDK's whole contract. Don't add a path that dispatches a tool ahead of a verdict.
 - **Duck-typing shape guard.** `InspectResponseAsync` duck-types an Anthropic message (`content[]` with `type:"tool_use"`) or an OpenAI completion (`choices[].message.tool_calls[]`, filtered to `type:"function"`) via JSON, then forwards the extracted calls to `InspectAllAsync`. A response that yields *zero* extracted calls is a no-op — `InspectAllAsync` early-returns on `calls.Count == 0` — which is the correct outcome for a text-only turn (no `tool_use` / `tool_calls` to gate). Don't add a throw here; a model turn with no tool calls is normal, not a contract error. The one drift signal: a turn whose `stop_reason` / `finish_reason` declares tool use but extracts zero calls emits a `Trace.TraceWarning` (provider shape drift; the calls were not inspected).
 - **No provider dependency.** Only the in-box `System.Text.Json`. Never add a PackageReference to the OpenAI/Anthropic SDKs — duck-type the JSON instead. Keeps the supply-chain surface minimal.

@@ -19,13 +19,13 @@ How the SDK behaves on each wire path. It is a client of
 
 ## Batch inspect — `InspectAllAsync` / `EnforceAsync`
 
-1. Fan out one inspection per call (`Task.WhenAll`).
-2. In enforce mode, any transport error surfaces before any deny is
-   processed (fail closed), matching Promise.all semantics.
-3. Process in **submission order**: `OnVerdict` fires per call, then the
+1. Allocate one client UUID before network access.
+2. Submit the complete ordered sibling set through
+   `clavenar.atomic-tool-call-batch/v1` as one side-effect-free decision.
+3. Process the batch verdict in **submission order**: `OnVerdict` fires per call, then the
    first `Deny` → `ClavenarDeniedException` / `Pending` →
-   `ClavenarPendingException`. Observe never throws; a per-call transport
-   failure fires `OnPolicyError` and is treated as allowed.
+   `ClavenarPendingException`. Observe never throws; a batch transport
+   failure fires `OnPolicyError` for every covered call.
 
 ## Response extraction — `InspectResponseAsync`
 

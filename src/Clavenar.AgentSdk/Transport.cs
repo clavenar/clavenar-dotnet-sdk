@@ -13,9 +13,67 @@ using System.Threading.Tasks;
 internal static class Transport
 {
     private const string CorrelationHeader = "X-Clavenar-Correlation-Id";
+    internal const string DecisionContract = "clavenar.decision/v1";
+    internal const string DecisionContractHeader = "X-Clavenar-Decision-Contract";
+    internal const string IdempotencyIdHeader = "X-Clavenar-Idempotency-Id";
 
     internal static async Task<Verdict> InspectAsync(
         NormalizedToolCall call, ClavenarOptions opts, CancellationToken ct)
+    {
+        string idempotencyId = Guid.NewGuid().ToString();
+        var root = ToolRequest(call.Name, call.Input, idempotencyId);
+        return await InspectDecisionAsync(root, idempotencyId, opts, ct).ConfigureAwait(false);
+    }
+
+    internal static Task<Verdict> InspectBatchAsync(
+        IReadOnlyList<NormalizedToolCall> calls, ClavenarOptions opts, CancellationToken ct)
+    {
+        if (calls is null || calls.Count < 1 || calls.Count > 128)
+        {
+            throw new ClavenarConfigException("atomic decision batch must contain 1..128 calls");
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        string idempotencyId = Guid.NewGuid().ToString();
+        var encodedCalls = new JsonArray();
+        foreach (var call in calls)
+        {
+            if (string.IsNullOrEmpty(call.Id)
+                || string.IsNullOrEmpty(call.Name)
+                || !ids.Add(call.Id))
+            {
+                throw new ClavenarConfigException(
+                    "atomic decision calls require unique non-empty ids and names");
+            }
+
+            encodedCalls.Add(new JsonObject
+            {
+                ["id"] = call.Id,
+                ["name"] = call.Name,
+                ["arguments"] = call.Input?.DeepClone() ?? new JsonObject(),
+            });
+        }
+
+        var root = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = idempotencyId,
+            ["method"] = "clavenar/tools.batch",
+            ["params"] = new JsonObject
+            {
+                ["name"] = "clavenar.atomic-batch",
+                ["arguments"] = new JsonObject
+                {
+                    ["contract"] = "clavenar.atomic-tool-call-batch/v1",
+                    ["calls"] = encodedCalls,
+                },
+            },
+        };
+        return InspectDecisionAsync(root, idempotencyId, opts, ct);
+    }
+
+    private static async Task<Verdict> InspectDecisionAsync(
+        JsonObject root, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
     {
         var retry = opts.Retry;
         if (retry.MaxAttempts < 1)
@@ -29,7 +87,7 @@ internal static class Transport
         {
             try
             {
-                return await InspectOnceAsync(call, opts, ct).ConfigureAwait(false);
+                return await InspectOnceAsync(root, idempotencyId, opts, ct).ConfigureAwait(false);
             }
             catch (ClavenarTransportException e)
             {
@@ -47,28 +105,9 @@ internal static class Transport
     }
 
     private static async Task<Verdict> InspectOnceAsync(
-        NormalizedToolCall call, ClavenarOptions opts, CancellationToken ct)
+        JsonObject root, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
     {
-        var root = new JsonObject
-        {
-            ["jsonrpc"] = "2.0",
-            ["method"] = "tools/call",
-            ["params"] = new JsonObject
-            {
-                ["name"] = call.Name,
-                ["arguments"] = call.Input?.DeepClone() ?? new JsonObject(),
-            },
-            ["id"] = call.Id,
-        };
-
-        using var req = new HttpRequestMessage(HttpMethod.Post, JoinUrl(opts.Endpoint, "/mcp"))
-        {
-            Content = new StringContent(root.ToJsonString(), Encoding.UTF8, "application/json"),
-        };
-        if (!string.IsNullOrEmpty(opts.Token))
-        {
-            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {opts.Token}");
-        }
+        using var req = DecisionRequest(root.ToJsonString(), idempotencyId, opts);
 
         var (resp, body) = await SendAsync(opts, req, ct, "inspect").ConfigureAwait(false);
         using (resp)
@@ -86,6 +125,91 @@ internal static class Transport
                 _ => throw new ClavenarTransportException(UnexpectedMsg("inspect", status, body), status),
             };
         }
+    }
+
+    internal static async Task<JsonObject> AuthorizeAsync(
+        JsonObject body, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
+    {
+        var retry = opts.Retry;
+        string encoded = body.ToJsonString();
+        ClavenarTransportException? last = null;
+        for (int attempt = 0; attempt < retry.MaxAttempts; attempt++)
+        {
+            try
+            {
+                using var req = DecisionRequest(encoded, idempotencyId, opts);
+                var (response, responseBody) = await SendAsync(opts, req, ct, "authorization")
+                    .ConfigureAwait(false);
+                using (response)
+                {
+                    int status = (int)response.StatusCode;
+                    if (status == 200)
+                    {
+                        try
+                        {
+                            return JsonNode.Parse(responseBody) as JsonObject
+                                ?? throw new ClavenarTransportException(
+                                    "clavenar authorization returned a non-object", 200);
+                        }
+                        catch (ClavenarTransportException)
+                        {
+                            throw;
+                        }
+                        catch (JsonException error)
+                        {
+                            throw new ClavenarTransportException(
+                                $"clavenar authorization returned invalid JSON: {error.Message}", 200);
+                        }
+                    }
+
+                    last = new ClavenarTransportException(
+                        UnexpectedMsg("authorization", status, responseBody), status);
+                }
+            }
+            catch (ClavenarTransportException error)
+            {
+                last = error;
+            }
+
+            if (last is null || !IsRetriable(last) || attempt == retry.MaxAttempts - 1)
+            {
+                throw last!;
+            }
+
+            await Task.Delay(Backoff(retry.BaseDelay, attempt), ct).ConfigureAwait(false);
+        }
+
+        throw last!;
+    }
+
+    internal static JsonObject ToolRequest(string name, JsonNode? input, string idempotencyId) =>
+        new()
+        {
+            ["jsonrpc"] = "2.0",
+            ["method"] = "tools/call",
+            ["params"] = new JsonObject
+            {
+                ["name"] = name,
+                ["arguments"] = input?.DeepClone() ?? new JsonObject(),
+            },
+            ["id"] = idempotencyId,
+        };
+
+    private static HttpRequestMessage DecisionRequest(
+        string body, string idempotencyId, ClavenarOptions opts)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, JoinUrl(opts.Endpoint, "/mcp"))
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation(DecisionContractHeader, DecisionContract);
+        request.Headers.TryAddWithoutValidation(IdempotencyIdHeader, idempotencyId);
+        if (!string.IsNullOrEmpty(opts.Token))
+        {
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {opts.Token}");
+        }
+
+        return request;
     }
 
     internal static async Task<ClavenarPendingView> PollPendingOnceAsync(

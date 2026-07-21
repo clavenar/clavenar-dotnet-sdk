@@ -3,7 +3,6 @@ namespace Clavenar.AgentSdk;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -38,10 +37,10 @@ public sealed class ClavenarInspector
         Transport.PollPendingOnceAsync(correlationId, _opts, cancellationToken);
 
     /// <summary>
-    /// Inspect a batch concurrently and, in enforce mode, throw the first
+    /// Inspect a complete sibling set through one ordered atomic decision and, in enforce mode,
+    /// throw the first
     /// <see cref="ClavenarDeniedException"/> / <see cref="ClavenarPendingException"/> /
-    /// <see cref="ClavenarRateLimitedException"/> in submission order. Observe mode never blocks;
-    /// a per-call transport failure fires OnPolicyError.
+    /// <see cref="ClavenarRateLimitedException"/> in submission order. Observe mode never blocks.
     /// </summary>
     public async Task InspectAllAsync(
         IReadOnlyList<NormalizedToolCall> calls, CancellationToken cancellationToken = default)
@@ -52,39 +51,41 @@ public sealed class ClavenarInspector
         }
 
         bool enforce = _opts.Mode == Mode.Enforce;
-        var outcomes = await Task.WhenAll(calls.Select(c => InspectOutcomeAsync(c, cancellationToken)))
-            .ConfigureAwait(false);
-
-        // Fail closed before processing any deny, matching Promise.all semantics.
-        if (enforce)
+        Verdict verdict;
+        try
         {
-            foreach (var o in outcomes)
+            verdict = calls.Count == 1
+                ? await Transport.InspectAsync(calls[0], _opts, cancellationToken).ConfigureAwait(false)
+                : await Transport.InspectBatchAsync(calls, _opts, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ClavenarTransportException error)
+        {
+            if (enforce)
             {
-                if (o.Error is not null)
+                throw;
+            }
+
+            foreach (var call in calls)
+            {
+                if (_opts.OnPolicyError is not null)
                 {
-                    throw o.Error;
+                    await _opts.OnPolicyError(
+                        error,
+                        new VerdictContext(call.Name, call.Id, call.Input),
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
+
+            return;
         }
 
         for (int i = 0; i < calls.Count; i++)
         {
             var call = calls[i];
-            var outcome = outcomes[i];
             var ctx = new VerdictContext(call.Name, call.Id, call.Input);
-            if (outcome.Error is not null)
-            {
-                if (_opts.OnPolicyError is not null)
-                {
-                    await _opts.OnPolicyError(outcome.Error, ctx, cancellationToken).ConfigureAwait(false);
-                }
-
-                continue;
-            }
-
             if (_opts.OnVerdict is not null)
             {
-                await _opts.OnVerdict(outcome.Verdict!, ctx, cancellationToken).ConfigureAwait(false);
+                await _opts.OnVerdict(verdict, ctx, cancellationToken).ConfigureAwait(false);
             }
 
             if (!enforce)
@@ -92,7 +93,6 @@ public sealed class ClavenarInspector
                 continue;
             }
 
-            var verdict = outcome.Verdict!;
             switch (verdict.Kind)
             {
                 case VerdictKind.Deny:
@@ -150,18 +150,6 @@ public sealed class ClavenarInspector
         }
 
         return InspectAllAsync(calls, cancellationToken);
-    }
-
-    private async Task<Outcome> InspectOutcomeAsync(NormalizedToolCall call, CancellationToken ct)
-    {
-        try
-        {
-            return Outcome.Ok(await Transport.InspectAsync(call, _opts, ct).ConfigureAwait(false));
-        }
-        catch (ClavenarTransportException e)
-        {
-            return Outcome.Fail(e);
-        }
     }
 
     private static IReadOnlyList<NormalizedToolCall> ExtractCalls(JsonNode? tree)
@@ -236,20 +224,4 @@ public sealed class ClavenarInspector
     private static string? Str(JsonNode? node) =>
         node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
-    private readonly struct Outcome
-    {
-        private Outcome(Verdict? verdict, ClavenarTransportException? error)
-        {
-            Verdict = verdict;
-            Error = error;
-        }
-
-        public Verdict? Verdict { get; }
-
-        public ClavenarTransportException? Error { get; }
-
-        public static Outcome Ok(Verdict v) => new(v, null);
-
-        public static Outcome Fail(ClavenarTransportException e) => new(null, e);
-    }
 }

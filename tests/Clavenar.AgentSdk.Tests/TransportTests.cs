@@ -212,11 +212,17 @@ public class TransportTests
         Assert.Equal("/mcp", captured.RequestUri!.AbsolutePath);
         Assert.Equal("application/json", captured.Content!.Headers.ContentType!.MediaType);
         Assert.Equal("Bearer tok", captured.Headers.GetValues("Authorization").First());
+        Assert.Equal(
+            Transport.DecisionContract,
+            captured.Headers.GetValues(Transport.DecisionContractHeader).First());
 
         var env = JsonNode.Parse(capturedBody!)!;
         Assert.Equal("2.0", (string?)env["jsonrpc"]);
         Assert.Equal("tools/call", (string?)env["method"]);
-        Assert.Equal("toolu_1", (string?)env["id"]);
+        Assert.Equal(
+            captured.Headers.GetValues(Transport.IdempotencyIdHeader).First(),
+            (string?)env["id"]);
+        Assert.True(Guid.TryParseExact((string?)env["id"], "D", out _));
         Assert.Equal("delete_user", (string?)env["params"]!["name"]);
         Assert.Equal("alice", (string?)env["params"]!["arguments"]!["user"]);
     }

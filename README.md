@@ -56,7 +56,9 @@ await Clavenar.InspectResponseAsync(completion, opts); // throws on a denied too
 
 `ClavenarInspector.InspectAsync` returns a `Verdict`
 (`Allow` / `Deny` / `Pending` / `RateLimited`). The batch / enforce
-paths translate, in enforce mode, to exceptions rooted at
+paths explicitly select side-effect-free `clavenar.decision/v1`; the UUID is
+allocated before the first attempt and a multi-tool turn uses one ordered
+atomic decision. They translate, in enforce mode, to exceptions rooted at
 `ClavenarException`:
 
 | Exception | Meaning |

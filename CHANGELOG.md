@@ -5,6 +5,21 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-21
+
+### Added
+
+- `GovernedExecutionClient` with serializable prepared requests, a registered
+  executor, durable intent/completion store, workload receipt signer, and
+  actual provider-result return.
+- The shared `clavenar.sdk-cross-language/v1` fixture, packaged in the NuGet.
+
+### Changed
+
+- Inspection explicitly selects `clavenar.decision/v1` with a UUID allocated
+  before the first attempt and retained across safe retries. Multi-tool turns
+  use one ordered atomic decision.
+
 ### Added
 
 - 429 rate-limit verdicts. An HTTP 429 from the gateway now parses into

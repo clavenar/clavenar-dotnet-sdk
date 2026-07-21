@@ -24,4 +24,8 @@
     <ProjectReference Include="..\..\src\Clavenar.AgentSdk\Clavenar.AgentSdk.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="../../fixtures/retry-separation-v1.fixture.json" Link="fixtures/retry-separation-v1.fixture.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -5,6 +5,16 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-21
+
+### Changed
+
+- Automatic transport retry is explicitly confined to the side-effect-free
+  decision request and retains its original canonical idempotency ID. Registered
+  executor failures are never retried.
+- The shared `clavenar.retry-separation/v1` fixture and schema are packaged in
+  the NuGet package.
+
 ## [1.3.0] - 2026-07-21
 
 ### Added

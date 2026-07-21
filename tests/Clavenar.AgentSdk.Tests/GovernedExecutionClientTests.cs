@@ -71,6 +71,34 @@ public sealed class GovernedExecutionClientTests
         Assert.False(executor.Called);
     }
 
+    [Fact]
+    public async Task ExecutorFailureIsNeverRetried()
+    {
+        int decisions = 0;
+        var handler = new StubHandler((_, body) =>
+        {
+            decisions++;
+            return StubResponse.Of(200, Authorization(body));
+        });
+        var executor = new FailingExecutor();
+        var client = new GovernedExecutionClient(
+            Fixtures.Opts(handler) with { Retry = new RetryOptions(3, TimeSpan.FromMilliseconds(1)) },
+            "payments-provider",
+            executor,
+            new RecordingStore(new List<string>()),
+            new Signer());
+        var prepared = GovernedExecutionClient.Restore(
+            IdempotencyId,
+            "payments.transfer",
+            JsonNode.Parse("{\"amount\":100}"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.ExecutePreparedAsync(prepared));
+
+        Assert.Equal(1, decisions);
+        Assert.Equal(1, executor.Calls);
+    }
+
     private static string Authorization(string requestBody)
     {
         var authorization = new JsonObject
@@ -120,6 +148,19 @@ public sealed class GovernedExecutionClientTests
             return Task.FromResult(new GovernedExecutionClient.ExecutionEffect(
                 new JsonObject { ["ok"] = true },
                 "provider-operation-123"));
+        }
+    }
+
+    private sealed class FailingExecutor : GovernedExecutionClient.IToolExecutor
+    {
+        public int Calls { get; private set; }
+
+        public Task<GovernedExecutionClient.ExecutionEffect> ExecuteAsync(
+            GovernedExecutionClient.ToolExecutionRequest request,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            throw new InvalidOperationException("provider unavailable");
         }
     }
 

@@ -1,6 +1,7 @@
 namespace Clavenar.AgentSdk.Tests;
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
@@ -166,10 +167,21 @@ public class TransportTests
     public async Task RetryThenSuccess()
     {
         int n = 0;
-        var h = new StubHandler((_, _) => ++n < 3 ? StubResponse.Of(503) : StubResponse.Of(200));
+        var attempts = new List<(string Body, string Selector, string IdempotencyId)>();
+        var h = new StubHandler((request, body) =>
+        {
+            attempts.Add((
+                body,
+                request.Headers.GetValues(Transport.DecisionContractHeader).Single(),
+                request.Headers.GetValues(Transport.IdempotencyIdHeader).Single()));
+            return ++n < 3 ? StubResponse.Of(503) : StubResponse.Of(200);
+        });
         var v = await Inspect(Fixtures.Opts(h) with { Retry = new RetryOptions(3, TimeSpan.FromMilliseconds(1)) });
         Assert.Equal(VerdictKind.Allow, v.Kind);
         Assert.Equal(3, n);
+        Assert.Single(attempts.Select(attempt => attempt.Body).Distinct(StringComparer.Ordinal));
+        Assert.Single(attempts.Select(attempt => attempt.IdempotencyId).Distinct(StringComparer.Ordinal));
+        Assert.All(attempts, attempt => Assert.Equal(Transport.DecisionContract, attempt.Selector));
     }
 
     [Fact]

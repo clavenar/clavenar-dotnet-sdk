@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <None Include="../../fixtures/retry-separation-v1.fixture.json" Link="fixtures/retry-separation-v1.fixture.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../fixtures/client-migration-v1.fixture.json" Link="fixtures/client-migration-v1.fixture.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../fixtures/client-migration-v1.schema.json" Link="fixtures/client-migration-v1.schema.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

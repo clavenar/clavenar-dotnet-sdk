@@ -26,6 +26,9 @@ public sealed record ClavenarOptions
     /// <summary>An HTTP client to use; a shared default is used when null.</summary>
     public HttpClient? HttpClient { get; init; }
 
+    /// <summary>Reusable reload-before-request secure transport profile.</summary>
+    public SecureTransportProfile? SecureTransport { get; init; }
+
     /// <summary>Fires per inspected call before any deny→throw translation, in both modes.</summary>
     public Func<Verdict, VerdictContext, CancellationToken, Task>? OnVerdict { get; init; }
 
@@ -39,6 +42,13 @@ public sealed record ClavenarOptions
     public bool DevMode { get; init; }
 
     internal HttpClient EffectiveClient => HttpClient ?? SharedClient;
+
+    internal (HttpClient Client, bool Owned) AcquireClient() =>
+        SecureTransport is null ? (EffectiveClient, false) : (SecureTransport.CreateClient(), true);
+
+    internal string? EffectiveToken => SecureTransport?.Token() ?? Token;
+
+    internal TimeSpan EffectiveTimeout => SecureTransport?.RequestTimeout ?? Timeout;
 
     internal void Validate()
     {
@@ -56,5 +66,13 @@ public sealed record ClavenarOptions
         {
             throw new ClavenarConfigException("clavenar: Timeout must be positive");
         }
+
+        if (SecureTransport is not null && (HttpClient is not null || Token is not null))
+        {
+            throw new ClavenarConfigException(
+                "clavenar: SecureTransport cannot be combined with Token or HttpClient");
+        }
+
+        SecureTransport?.Validate();
     }
 }

@@ -5,6 +5,14 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-26
+
+### Added
+
+- `SecureTransportProfile` reloads the pinned CA/client identity and current
+  token per request, with separate connect/request deadlines and explicit
+  direct/environment/URL proxy behavior across every transport path.
+
 ## [1.5.0] - 2026-07-21
 
 ### Changed

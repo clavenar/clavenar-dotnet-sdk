@@ -204,9 +204,10 @@ internal static class Transport
         };
         request.Headers.TryAddWithoutValidation(DecisionContractHeader, DecisionContract);
         request.Headers.TryAddWithoutValidation(IdempotencyIdHeader, idempotencyId);
-        if (!string.IsNullOrEmpty(opts.Token))
+        var token = opts.EffectiveToken;
+        if (!string.IsNullOrEmpty(token))
         {
-            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {opts.Token}");
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
         }
 
         return request;
@@ -217,9 +218,10 @@ internal static class Transport
     {
         var url = JoinUrl(opts.Endpoint, "/pending/" + Uri.EscapeDataString(correlationId));
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(opts.Token))
+        var token = opts.EffectiveToken;
+        if (!string.IsNullOrEmpty(token))
         {
-            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {opts.Token}");
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
         }
 
         var (resp, body) = await SendAsync(opts, req, ct, "poll").ConfigureAwait(false);
@@ -261,19 +263,30 @@ internal static class Transport
         ClavenarOptions opts, HttpRequestMessage req, CancellationToken ct, string op)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(opts.Timeout);
+        cts.CancelAfter(opts.EffectiveTimeout);
         try
         {
-            var resp = await opts.EffectiveClient
-                .SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token)
-                .ConfigureAwait(false);
-            var body = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-            return (resp, body);
+            var (client, owned) = opts.AcquireClient();
+            try
+            {
+                var resp = await client
+                    .SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token)
+                    .ConfigureAwait(false);
+                var body = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+                return (resp, body);
+            }
+            finally
+            {
+                if (owned)
+                {
+                    client.Dispose();
+                }
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             throw new ClavenarTransportException(
-                $"clavenar {op} timed out after {opts.Timeout.TotalMilliseconds}ms");
+                $"clavenar {op} timed out after {opts.EffectiveTimeout.TotalMilliseconds}ms");
         }
         catch (HttpRequestException e)
         {

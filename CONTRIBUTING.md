@@ -21,11 +21,11 @@ SBOM.
 - Tests run against a custom `HttpMessageHandler` (`StubHandler`); no live
   network in unit tests.
 
-## Releasing to NuGet
+## Releasing
 
-One-time setup: a NuGet.org account, reserve the `Clavenar.*` package-id
-prefix (needs the verified `clavenar.com` domain), and add a
-`NUGET_API_KEY` repository secret (migrate to NuGet.org OIDC
-trusted-publishing as a follow-up). Then push a tag matching the csproj
-`<Version>` (e.g. `v1.0.0`): `release.yml` asserts the match, builds,
-tests, packs (with `.snupkg` symbols + SourceLink), and pushes.
+Direct tag publication is disabled. The protected stack distribution workflow
+dispatches `release.yml` with the exact signed-BOM source SHA and component
+version. The workflow builds and tests, publishes the `.nupkg` and `.snupkg`
+to the authenticated GitHub Packages NuGet registry, and attaches both to an
+anonymous versioned GitHub release. Missing or substituted protected inputs
+fail before publication.

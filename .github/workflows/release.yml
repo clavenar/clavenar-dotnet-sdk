@@ -1,16 +1,13 @@
 name: release
-
-# Push a tag matching v* (e.g. v1.0.0) that equals the csproj <Version> to
-# publish to NuGet.org. Requires a NUGET_API_KEY repo secret (and the
-# reserved Clavenar.* prefix). See CONTRIBUTING.md.
+run-name: publish ${{ github.event.client_payload.publication_id }}
 
 on:
-  push:
-    tags:
-      - 'v*'
+  repository_dispatch:
+    types: [clavenar-protected-publication]
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 jobs:
   publish:
@@ -18,28 +15,54 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
+          ref: ${{ github.event.client_payload.source_sha }}
           fetch-depth: 0
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.423'
 
-      - name: Verify tag matches version
+      - name: Verify protected publication input
+        env:
+          COMPONENT_VERSION: ${{ github.event.client_payload.component_version }}
+          RELEASE_REFERENCE: ${{ github.event.client_payload.release_reference }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          test "$GITHUB_ACTOR" = "vanteguardlabs"
+          [[ "$RELEASE_REFERENCE" =~ ^ghcr\.io/clavenar/clavenar-stack-release@sha256:[0-9a-f]{64}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           VER="$(grep -oPm1 '(?<=<Version>)[^<]+' src/Clavenar.AgentSdk/Clavenar.AgentSdk.csproj)"
-          if [ "$TAG" != "$VER" ]; then
-            echo "::error::tag '$GITHUB_REF_NAME' (version '$TAG') does not match csproj '$VER'"
+          if [ "$COMPONENT_VERSION" != "$VER" ]; then
+            echo "::error::protected component version does not match csproj '$VER'"
             exit 1
           fi
 
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
+      - run: dotnet format --no-restore --verify-no-changes
       - run: dotnet test --no-build -c Release
       - run: dotnet pack --no-build -c Release -o artifacts
 
-      - name: Push to NuGet
+      - name: Publish to GitHub Packages NuGet registry
         run: >
           dotnet nuget push "artifacts/*.nupkg"
-          --api-key ${{ secrets.NUGET_API_KEY }}
-          --source https://api.nuget.org/v3/index.json
+          --api-key ${{ secrets.GITHUB_TOKEN }}
+          --source https://nuget.pkg.github.com/clavenar/index.json
           --skip-duplicate
+
+      - name: Publish the exact source tag and release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.client_payload.component_version }}
+          SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" \
+              --jq '.object.sha')" = "$SOURCE_SHA"
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" \
+              --title "$tag — Clavenar.AgentSdk" \
+              --notes "Published from the accepted protected Clavenar release." \
+              artifacts/*
+          fi

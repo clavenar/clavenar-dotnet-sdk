@@ -1,7 +1,7 @@
 # clavenar-dotnet-sdk
 
 [![CI](https://github.com/clavenar/clavenar-dotnet-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/clavenar/clavenar-dotnet-sdk/actions/workflows/ci.yml)
-[![NuGet](https://img.shields.io/nuget/v/Clavenar.AgentSdk.svg)](https://www.nuget.org/packages/Clavenar.AgentSdk)
+[![Release](https://img.shields.io/github/v/release/clavenar/clavenar-dotnet-sdk)](https://github.com/clavenar/clavenar-dotnet-sdk/releases)
 
 .NET SDK for [Clavenar](https://clavenar.com). Inspect the tool calls a
 model emits against your policies *before* your agent runs them.
@@ -15,8 +15,14 @@ Part of the by-language agent-wrapper SDK family alongside
 ## Install
 
 ```bash
-dotnet add package Clavenar.AgentSdk
+dotnet nuget add source https://nuget.pkg.github.com/clavenar/index.json \
+  --name clavenar --username YOUR_GITHUB_USER --password YOUR_GITHUB_TOKEN \
+  --store-password-in-clear-text
+dotnet add package Clavenar.AgentSdk --version 1.6.0 --source clavenar
 ```
+
+The token needs `read:packages`. The exact `.nupkg` and symbols package are
+also attached anonymously to the versioned GitHub release.
 
 Targets `net8.0`. The only dependency is the in-box `System.Text.Json`;
 the SDK takes **no dependency on the OpenAI or Anthropic SDKs** — it

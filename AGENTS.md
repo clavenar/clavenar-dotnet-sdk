@@ -16,8 +16,9 @@ dotnet test -c Release             # --no-build in CI
 ```
 Pinned to the .NET 8 SDK via `global.json` (`rollForward: latestFeature`). CI
 runs the matrix on ubuntu / windows / macos, plus an `sbom` job
-(`dotnet list package --vulnerable --include-transitive` + CycloneDX). Tag
-`v<X.Y.Z>` matching csproj `<Version>` triggers the NuGet publish workflow.
+(`dotnet list package --vulnerable --include-transitive` + CycloneDX). The
+protected distribution workflow dispatches the exact csproj version and
+signed-BOM source SHA to the NuGet/GitHub release workflow.
 
 Run: library, no binary. The shippable package is
 `src/Clavenar.AgentSdk/Clavenar.AgentSdk.csproj`; tests in

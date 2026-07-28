@@ -24,6 +24,13 @@ dotnet add package Clavenar.AgentSdk --version 1.6.0 --source clavenar
 The token needs `read:packages`. The exact `.nupkg` and symbols package are
 also attached anonymously to the versioned GitHub release.
 
+```bash
+base=https://github.com/clavenar/clavenar-dotnet-sdk/releases/download/v1.6.0
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.0.nupkg"
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.0.snupkg"
+unzip -t Clavenar.AgentSdk.1.6.0.nupkg
+```
+
 Targets `net8.0`. The only dependency is the in-box `System.Text.Json`;
 the SDK takes **no dependency on the OpenAI or Anthropic SDKs** — it
 duck-types their responses.

@@ -18,6 +18,8 @@ jobs:
           ref: ${{ github.event.client_payload.source_sha }}
           fetch-depth: 0
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet-${{ github.run_id }}-${{ github.run_attempt }}
         with:
           dotnet-version: '8.0.423'
 

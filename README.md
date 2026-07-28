@@ -18,17 +18,17 @@ Part of the by-language agent-wrapper SDK family alongside
 dotnet nuget add source https://nuget.pkg.github.com/clavenar/index.json \
   --name clavenar --username YOUR_GITHUB_USER --password YOUR_GITHUB_TOKEN \
   --store-password-in-clear-text
-dotnet add package Clavenar.AgentSdk --version 1.6.0 --source clavenar
+dotnet add package Clavenar.AgentSdk --version 1.6.1 --source clavenar
 ```
 
 The token needs `read:packages`. The exact `.nupkg` and symbols package are
 also attached anonymously to the versioned GitHub release.
 
 ```bash
-base=https://github.com/clavenar/clavenar-dotnet-sdk/releases/download/v1.6.0
-curl -fsSLO "$base/Clavenar.AgentSdk.1.6.0.nupkg"
-curl -fsSLO "$base/Clavenar.AgentSdk.1.6.0.snupkg"
-unzip -t Clavenar.AgentSdk.1.6.0.nupkg
+base=https://github.com/clavenar/clavenar-dotnet-sdk/releases/download/v1.6.1
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.1.nupkg"
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.1.snupkg"
+unzip -t Clavenar.AgentSdk.1.6.1.nupkg
 ```
 
 Targets `net8.0`. The only dependency is the in-box `System.Text.Json`;

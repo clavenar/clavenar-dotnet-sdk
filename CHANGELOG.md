@@ -28,6 +28,8 @@ the project adheres to [Semantic Versioning](https://semver.org/).
   ignore only network and 5xx failures.
 - Canonical execution JSON accepts only the cross-language safe numeric subset,
   uses UTF-16 object-key ordering, and bounds receipt finalization.
+- Cached secure transports retain their custom trust roots for the complete
+  TLS client lifetime, and network failures preserve their original exception.
 
 ## [1.6.1] - 2026-07-28
 

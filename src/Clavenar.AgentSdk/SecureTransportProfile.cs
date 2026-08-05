@@ -115,6 +115,11 @@ public sealed class SecureTransportProfile : IDisposable
                     "secure transport CA bundle contains no certificates");
             }
 
+            // Capture an ownership-stable reference. The nullable local is
+            // cleared below so the finally block does not dispose resources
+            // transferred to the snapshot; a callback that captured that
+            // local directly would therefore observe null at handshake time.
+            var trustRoots = roots;
             var clientCertificates = new X509CertificateCollection { identity };
             handler = new SocketsHttpHandler
             {
@@ -124,12 +129,13 @@ public sealed class SecureTransportProfile : IDisposable
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     ClientCertificates = clientCertificates,
                     RemoteCertificateValidationCallback =
-                        (_, certificate, _, errors) => ValidateServer(certificate, errors, roots),
+                        (_, certificate, _, errors) =>
+                            ValidateServer(certificate, errors, trustRoots),
                 },
             };
             ConfigureProxy(handler);
             var client = new HttpClient(handler, disposeHandler: true) { Timeout = RequestTimeout };
-            var snapshot = new TransportSnapshot(client, identity, roots);
+            var snapshot = new TransportSnapshot(client, identity, trustRoots);
             handler = null;
             identity = null;
             roots = null;

@@ -172,6 +172,7 @@ public class TransportTests
         var h = new StubHandler((_, _) => new StubResponse { Throw = true });
         var e = await Assert.ThrowsAsync<ClavenarTransportException>(() => Inspect(Fixtures.Opts(h)));
         Assert.Equal(0, e.Status);
+        Assert.IsType<HttpRequestException>(e.InnerException);
     }
 
     [Fact]

@@ -340,7 +340,8 @@ internal static class Transport
         }
         catch (HttpRequestException e)
         {
-            throw new ClavenarTransportException($"clavenar {op} failed: {e.Message}");
+            throw new ClavenarTransportException(
+                $"clavenar {op} failed: {e.Message}", e);
         }
     }
 

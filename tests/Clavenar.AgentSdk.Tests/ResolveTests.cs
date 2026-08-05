@@ -59,6 +59,21 @@ public class ResolveTests
     }
 
     [Fact]
+    public async Task Malformed200IsTerminal()
+    {
+        int polls = 0;
+        var h = new StubHandler((_, _) =>
+        {
+            polls++;
+            return StubResponse.Of(200, "{}");
+        });
+        var error = await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => Pending(h).ResolveAsync(Fast()));
+        Assert.Equal(200, error.Status);
+        Assert.Equal(1, polls);
+    }
+
+    [Fact]
     public async Task Swallows5xxThenAllow()
     {
         int n = 0;

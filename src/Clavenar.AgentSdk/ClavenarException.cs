@@ -9,4 +9,7 @@ public abstract class ClavenarException : Exception
 {
     private protected ClavenarException(string message)
         : base(message) { }
+
+    private protected ClavenarException(string message, Exception innerException)
+        : base(message, innerException) { }
 }

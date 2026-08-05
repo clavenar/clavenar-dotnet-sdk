@@ -2,6 +2,7 @@ namespace Clavenar.AgentSdk;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -16,10 +17,17 @@ internal static class Transport
     internal const string DecisionContract = "clavenar.decision/v1";
     internal const string DecisionContractHeader = "X-Clavenar-Decision-Contract";
     internal const string IdempotencyIdHeader = "X-Clavenar-Idempotency-Id";
+    private const int MaxResponseBytes = 1024 * 1024;
+    private const int MaxErrorPreviewBytes = 4 * 1024;
+    private const int MaxToolArgumentBytes = 1024 * 1024;
+    private const int MaxBatchRequestBytes = 4 * 1024 * 1024;
+    private const int MaxIdentifierBytes = 1024;
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(1);
 
     internal static async Task<Verdict> InspectAsync(
         NormalizedToolCall call, ClavenarOptions opts, CancellationToken ct)
     {
+        ValidateCall(call);
         string idempotencyId = Guid.NewGuid().ToString();
         var root = ToolRequest(call.Name, call.Input, idempotencyId);
         return await InspectDecisionAsync(root, idempotencyId, opts, ct).ConfigureAwait(false);
@@ -45,6 +53,8 @@ internal static class Transport
                 throw new ClavenarConfigException(
                     "atomic decision calls require unique non-empty ids and names");
             }
+
+            ValidateCall(call);
 
             encodedCalls.Add(new JsonObject
             {
@@ -76,18 +86,14 @@ internal static class Transport
         JsonObject root, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
     {
         var retry = opts.Retry;
-        if (retry.MaxAttempts < 1)
-        {
-            throw new ClavenarTransportException(
-                $"clavenar: Retry.MaxAttempts must be >= 1, got {retry.MaxAttempts}");
-        }
+        string encoded = Encode(root, "inspect");
 
         ClavenarTransportException? last = null;
         for (int attempt = 0; attempt < retry.MaxAttempts; attempt++)
         {
             try
             {
-                return await InspectOnceAsync(root, idempotencyId, opts, ct).ConfigureAwait(false);
+                return await InspectOnceAsync(encoded, idempotencyId, opts, ct).ConfigureAwait(false);
             }
             catch (ClavenarTransportException e)
             {
@@ -105,9 +111,9 @@ internal static class Transport
     }
 
     private static async Task<Verdict> InspectOnceAsync(
-        JsonObject root, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
+        string bodyJson, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
     {
-        using var req = DecisionRequest(root.ToJsonString(), idempotencyId, opts);
+        using var req = DecisionRequest(bodyJson, idempotencyId, opts);
 
         var (resp, body) = await SendAsync(opts, req, ct, "inspect").ConfigureAwait(false);
         using (resp)
@@ -115,10 +121,19 @@ internal static class Transport
             string? corr =
                 resp.Headers.TryGetValues(CorrelationHeader, out var vals) ? FirstOrNull(vals) : null;
             int status = (int)resp.StatusCode;
+            string? contract =
+                resp.Headers.TryGetValues(DecisionContractHeader, out var contracts)
+                    ? FirstOrNull(contracts)
+                    : null;
+            if (contract is not null && contract != DecisionContract)
+            {
+                throw new ClavenarTransportException(
+                    $"clavenar inspect: unsupported decision contract {contract}", status);
+            }
+
             return status switch
             {
-                200 => new Verdict(
-                    VerdictKind.Allow, corr, Array.Empty<string>(), Array.Empty<string>(), string.Empty, null),
+                200 => ParseAllow(body, corr),
                 403 => ParseDeny(body, corr),
                 202 => ParsePending(body, corr),
                 429 => ParseRateLimited(body, corr),
@@ -131,7 +146,7 @@ internal static class Transport
         JsonObject body, string idempotencyId, ClavenarOptions opts, CancellationToken ct)
     {
         var retry = opts.Retry;
-        string encoded = body.ToJsonString();
+        string encoded = Encode(body, "authorization");
         ClavenarTransportException? last = null;
         for (int attempt = 0; attempt < retry.MaxAttempts; attempt++)
         {
@@ -216,6 +231,13 @@ internal static class Transport
     internal static async Task<ClavenarPendingView> PollPendingOnceAsync(
         string correlationId, ClavenarOptions opts, CancellationToken ct)
     {
+        if (string.IsNullOrEmpty(correlationId)
+            || Encoding.UTF8.GetByteCount(correlationId) > MaxIdentifierBytes)
+        {
+            throw new ClavenarConfigException(
+                $"pending correlation id must be non-empty and no greater than {MaxIdentifierBytes} bytes");
+        }
+
         var url = JoinUrl(opts.Endpoint, "/pending/" + Uri.EscapeDataString(correlationId));
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         var token = opts.EffectiveToken;
@@ -255,6 +277,17 @@ internal static class Transport
                     $"clavenar poll with unexpected decision: {view.Decision}", 200);
             }
 
+            if (view.CorrelationId != correlationId
+                || string.IsNullOrEmpty(view.AgentId)
+                || string.IsNullOrEmpty(view.ToolType)
+                || string.IsNullOrEmpty(view.Method)
+                || view.ReviewReasons is null
+                || string.IsNullOrEmpty(view.RequestedAt))
+            {
+                throw new ClavenarTransportException(
+                    "clavenar poll with unexpected body shape or correlation id", 200);
+            }
+
             return view;
         }
     }
@@ -270,10 +303,27 @@ internal static class Transport
             try
             {
                 var resp = await client
-                    .SendAsync(req, HttpCompletionOption.ResponseContentRead, cts.Token)
+                    .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token)
                     .ConfigureAwait(false);
-                var body = await resp.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-                return (resp, body);
+                try
+                {
+                    int status = (int)resp.StatusCode;
+                    int limit = ResponseLimit(status);
+                    if (resp.Content.Headers.ContentLength is long declared && declared > limit)
+                    {
+                        throw new ClavenarTransportException(
+                            $"clavenar {op} response exceeded {limit} bytes", status);
+                    }
+
+                    string body = await ReadBoundedAsync(resp, limit, op, cts.Token)
+                        .ConfigureAwait(false);
+                    return (resp, body);
+                }
+                catch
+                {
+                    resp.Dispose();
+                    throw;
+                }
             }
             finally
             {
@@ -294,6 +344,41 @@ internal static class Transport
         }
     }
 
+    private static async Task<string> ReadBoundedAsync(
+        HttpResponseMessage response, int limit, string op, CancellationToken ct)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var output = new MemoryStream(Math.Min(limit, 8192));
+        var buffer = new byte[8192];
+        int total = 0;
+        while (true)
+        {
+            int remaining = (limit + 1) - total;
+            if (remaining <= 0)
+            {
+                break;
+            }
+
+            int read = await stream.ReadAsync(
+                buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), ct).ConfigureAwait(false);
+            if (read == 0)
+            {
+                break;
+            }
+
+            output.Write(buffer, 0, read);
+            total += read;
+        }
+
+        if (total > limit)
+        {
+            throw new ClavenarTransportException(
+                $"clavenar {op} response exceeded {limit} bytes", (int)response.StatusCode);
+        }
+
+        return Encoding.UTF8.GetString(output.GetBuffer(), 0, total);
+    }
+
     private static Verdict ParseDeny(string body, string? corr)
     {
         JsonObject? obj;
@@ -308,7 +393,8 @@ internal static class Transport
 
         if (obj is null || AsString(obj["error"]) is null)
         {
-            throw new ClavenarTransportException($"clavenar 403 with unexpected body shape: {body}", 403);
+            throw new ClavenarTransportException(
+                $"clavenar 403 with unexpected body shape: {Preview(body)}", 403);
         }
 
         return new Verdict(
@@ -319,6 +405,37 @@ internal static class Transport
             AsString(obj["intent_category"]) ?? string.Empty,
             AsString(obj["layer"]),
             ParseVerdictDetail(obj["detail"]));
+    }
+
+    private static Verdict ParseAllow(string body, string? corr)
+    {
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            JsonObject? obj;
+            try
+            {
+                obj = JsonNode.Parse(body) as JsonObject;
+            }
+            catch (JsonException e)
+            {
+                throw new ClavenarTransportException(
+                    $"clavenar 200 with unparseable body: {e.Message}", 200);
+            }
+
+            if (obj is null || obj.Count != 1 || AsString(obj["verdict"]) != "allow")
+            {
+                throw new ClavenarTransportException(
+                    $"clavenar 200 with unexpected body shape: {Preview(body)}", 200);
+            }
+        }
+
+        return new Verdict(
+            VerdictKind.Allow,
+            corr,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            string.Empty,
+            null);
     }
 
     // Parse the optional verbose-verdict breakdown. Lenient: a missing or
@@ -365,12 +482,17 @@ internal static class Transport
 
         if (obj is null || AsString(obj["error"]) is null)
         {
-            throw new ClavenarTransportException($"clavenar 429 with unexpected body shape: {body}", 429);
+            throw new ClavenarTransportException(
+                $"clavenar 429 with unexpected body shape: {Preview(body)}", 429);
         }
 
         string code = AsString(obj["verdict"]) == "quota_exceeded" ? "quota_exceeded" : "rate_limited";
         int? retryAfterSecs =
-            obj["retry_after_secs"] is JsonValue rv && rv.TryGetValue<int>(out var secs) ? secs : null;
+            obj["retry_after_secs"] is JsonValue rv
+                && rv.TryGetValue<int>(out var secs)
+                && secs >= 0
+                ? secs
+                : null;
         string? id = !string.IsNullOrEmpty(corr) ? corr : AsString(obj["correlation_id"]);
         return new Verdict(
             VerdictKind.RateLimited,
@@ -403,10 +525,20 @@ internal static class Transport
             && obj["review_reasons"] is JsonArray;
         if (!ok)
         {
-            throw new ClavenarTransportException($"clavenar 202 with unexpected body shape: {body}", 202);
+            throw new ClavenarTransportException(
+                $"clavenar 202 with unexpected body shape: {Preview(body)}", 202);
         }
 
-        string id = !string.IsNullOrEmpty(corr) ? corr! : AsString(obj!["correlation_id"])!;
+        string bodyId = AsString(obj!["correlation_id"])!;
+        if (!string.IsNullOrEmpty(corr)
+            && !string.IsNullOrEmpty(bodyId)
+            && !string.Equals(corr, bodyId, StringComparison.Ordinal))
+        {
+            throw new ClavenarTransportException(
+                "clavenar 202 correlation id header/body mismatch", 202);
+        }
+
+        string id = !string.IsNullOrEmpty(corr) ? corr! : bodyId;
         if (string.IsNullOrEmpty(id))
         {
             throw new ClavenarTransportException(
@@ -433,13 +565,15 @@ internal static class Transport
 
     private static TimeSpan Backoff(TimeSpan baseDelay, int attempt)
     {
-        long ceilingMs = (long)baseDelay.TotalMilliseconds << attempt;
+        double ceilingMs = Math.Min(
+            MaxRetryDelay.TotalMilliseconds,
+            baseDelay.TotalMilliseconds * (1 << Math.Min(attempt, 30)));
         return TimeSpan.FromMilliseconds(ceilingMs * (0.5 + (Random.Shared.NextDouble() * 0.5)));
     }
 
     private static string UnexpectedMsg(string op, int status, string body)
     {
-        var text = body?.Trim() ?? string.Empty;
+        var text = Preview(body).Trim();
         return text.Length == 0
             ? $"clavenar {op}: unexpected status {status}"
             : $"clavenar {op}: unexpected status {status}: {text}";
@@ -473,5 +607,66 @@ internal static class Transport
         }
 
         return list;
+    }
+
+    private static string Encode(JsonObject body, string operation)
+    {
+        string encoded;
+        try
+        {
+            encoded = body.ToJsonString();
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
+        {
+            throw new ClavenarTransportException(
+                $"clavenar {operation}: failed to encode request: {e.Message}", e);
+        }
+
+        if (Encoding.UTF8.GetByteCount(encoded) > MaxBatchRequestBytes)
+        {
+            throw new ClavenarTransportException(
+                $"clavenar {operation} request exceeded {MaxBatchRequestBytes} bytes");
+        }
+
+        return encoded;
+    }
+
+    private static void ValidateCall(NormalizedToolCall call)
+    {
+        ArgumentNullException.ThrowIfNull(call);
+        if (string.IsNullOrEmpty(call.Id) || string.IsNullOrEmpty(call.Name))
+        {
+            throw new ClavenarConfigException("tool call requires a non-empty id and name");
+        }
+
+        if (Encoding.UTF8.GetByteCount(call.Id) > MaxIdentifierBytes
+            || Encoding.UTF8.GetByteCount(call.Name) > MaxIdentifierBytes)
+        {
+            throw new ClavenarConfigException(
+                $"tool call id and name must not exceed {MaxIdentifierBytes} bytes");
+        }
+
+        int argumentBytes = Encoding.UTF8.GetByteCount(call.Input?.ToJsonString() ?? "null");
+        if (argumentBytes > MaxToolArgumentBytes)
+        {
+            throw new ClavenarConfigException(
+                $"tool call arguments exceeded {MaxToolArgumentBytes} bytes");
+        }
+    }
+
+    private static int ResponseLimit(int status) =>
+        status is 200 or 202 or 403 or 429 ? MaxResponseBytes : MaxErrorPreviewBytes;
+
+    private static string Preview(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(value);
+        return bytes.Length <= MaxErrorPreviewBytes
+            ? value
+            : Encoding.UTF8.GetString(bytes, 0, MaxErrorPreviewBytes);
     }
 }

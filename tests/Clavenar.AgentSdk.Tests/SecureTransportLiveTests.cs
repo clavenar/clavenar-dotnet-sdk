@@ -21,7 +21,7 @@ public sealed class SecureTransportLiveTests
         string cert = Required("CLAVENAR_SECURE_TRANSPORT_CLIENT_CERT");
         string key = Required("CLAVENAR_SECURE_TRANSPORT_CLIENT_KEY");
         int generation = 0;
-        var profile = new SecureTransportProfile
+        using var profile = new SecureTransportProfile
         {
             CaBundlePath = Required("CLAVENAR_SECURE_TRANSPORT_CA"),
             ClientCertificatePath = cert,
@@ -38,6 +38,7 @@ public sealed class SecureTransportLiveTests
 
         File.Copy(Required("CLAVENAR_SECURE_TRANSPORT_NEXT_CERT"), cert, overwrite: true);
         File.Copy(Required("CLAVENAR_SECURE_TRANSPORT_NEXT_KEY"), key, overwrite: true);
+        profile.Reload();
         Assert.Equal(VerdictKind.Allow, (await inspector.InspectAsync(call)).Kind);
         Assert.Equal(2, generation);
     }

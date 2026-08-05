@@ -48,4 +48,19 @@ public sealed class SecureTransportProfileTests
 
         Assert.Throws<ClavenarConfigException>(profile.Token);
     }
+
+    [Fact]
+    public void DisposeIsIdempotentAndTerminal()
+    {
+        var profile = new SecureTransportProfile
+        {
+            CaBundlePath = "ca",
+            ClientCertificatePath = "cert",
+            PrivateKeyPath = "key",
+            TokenSource = () => "token",
+        };
+        profile.Dispose();
+        profile.Dispose();
+        Assert.Throws<ObjectDisposedException>(profile.Token);
+    }
 }

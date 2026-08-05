@@ -2,7 +2,6 @@ namespace Clavenar.AgentSdk;
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -136,59 +135,116 @@ public sealed class ClavenarInspector
     /// or an OpenAI chat completion (a <c>choices</c> array) — duck-typed via JSON, so no provider
     /// SDK dependency is required.
     /// </summary>
-    public Task InspectResponseAsync(object response, CancellationToken cancellationToken = default)
+    public async Task InspectResponseAsync(object response, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(response);
-        var tree = JsonSerializer.SerializeToNode(response);
-        var calls = ExtractCalls(tree);
-        if (calls.Count == 0 && DeclaresToolUse(tree))
+        JsonNode? tree;
+        IReadOnlyList<NormalizedToolCall> calls;
+        try
         {
-            Trace.TraceWarning(
-                "clavenar: response declares tool use (stop_reason/finish_reason) but no tool calls"
-                + " were extracted — the provider response shape may have drifted; tool calls were"
-                + " NOT inspected");
+            tree = JsonSerializer.SerializeToNode(response);
+            calls = ExtractCalls(tree);
+            if (calls.Count == 0 && DeclaresToolUse(tree))
+            {
+                throw new ClavenarTransportException(
+                    "clavenar: provider response declared tool use but contained no valid tool call");
+            }
+        }
+        catch (Exception error) when (
+            error is ClavenarTransportException
+                or ClavenarConfigException
+                or JsonException
+                or NotSupportedException)
+        {
+            var shapeError = error as ClavenarTransportException
+                ?? new ClavenarTransportException(
+                    "clavenar: provider response contained a malformed tool call", error);
+            if (_opts.Mode == Mode.Enforce)
+            {
+                throw shapeError;
+            }
+
+            if (_opts.OnPolicyError is not null)
+            {
+                await _opts.OnPolicyError(
+                    shapeError,
+                    new VerdictContext("<provider-response>", "<unknown>", null),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
         }
 
-        return InspectAllAsync(calls, cancellationToken);
+        await InspectAllAsync(calls, cancellationToken).ConfigureAwait(false);
     }
 
     private static IReadOnlyList<NormalizedToolCall> ExtractCalls(JsonNode? tree)
     {
         var calls = new List<NormalizedToolCall>();
-        if (tree is null)
+        if (tree is not JsonObject root)
         {
-            return calls;
+            throw new ClavenarTransportException(
+                "clavenar: provider response must be a JSON object");
         }
 
-        if (tree["content"] is JsonArray content)
+        if (root["content"] is JsonArray content)
         {
             foreach (var b in content)
             {
                 if (b is JsonObject bo && Str(bo["type"]) == "tool_use")
                 {
+                    if (string.IsNullOrEmpty(Str(bo["id"]))
+                        || string.IsNullOrEmpty(Str(bo["name"])))
+                    {
+                        throw new ClavenarTransportException(
+                            "clavenar: Anthropic tool_use block is missing a valid id or name");
+                    }
+
                     calls.Add(new NormalizedToolCall(
                         Str(bo["id"]) ?? string.Empty, Str(bo["name"]) ?? string.Empty, bo["input"]?.DeepClone()));
                 }
             }
         }
-        else if (tree["choices"] is JsonArray choices)
+        else if (root["choices"] is JsonArray choices)
         {
             foreach (var choice in choices)
             {
-                if (choice?["message"]?["tool_calls"] is JsonArray toolCalls)
+                if (choice is not JsonObject choiceObject
+                    || choiceObject["message"] is not JsonObject message)
+                {
+                    throw new ClavenarTransportException(
+                        "clavenar: OpenAI choice is missing a valid message object");
+                }
+
+                if (message["tool_calls"] is JsonArray toolCalls)
                 {
                     foreach (var tc in toolCalls)
                     {
-                        if (tc is JsonObject tco && Str(tco["type"]) == "function")
+                        if (tc is not JsonObject tco || Str(tco["type"]) != "function")
                         {
-                            var fn = tco["function"];
-                            calls.Add(NormalizedToolCall.FromJsonArguments(
-                                Str(tco["id"]) ?? string.Empty, Str(fn?["name"]) ?? string.Empty,
-                                Str(fn?["arguments"]) ?? string.Empty));
+                            throw new ClavenarTransportException(
+                                "clavenar: OpenAI tool_call has an unsupported or missing type");
                         }
+
+                        var fn = tco["function"];
+                        if (string.IsNullOrEmpty(Str(tco["id"]))
+                            || string.IsNullOrEmpty(Str(fn?["name"]))
+                            || Str(fn?["arguments"]) is null)
+                        {
+                            throw new ClavenarTransportException(
+                                "clavenar: OpenAI tool_call is missing a valid id, name, or arguments string");
+                        }
+
+                        calls.Add(NormalizedToolCall.FromJsonArguments(
+                            Str(tco["id"])!, Str(fn?["name"])!, Str(fn?["arguments"])!));
                     }
                 }
             }
+        }
+        else
+        {
+            throw new ClavenarTransportException(
+                "clavenar: provider response is missing a content or choices array");
         }
 
         return calls;
@@ -224,4 +280,21 @@ public sealed class ClavenarInspector
     private static string? Str(JsonNode? node) =>
         node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
+    internal async Task ProviderShapeErrorAsync(
+        string message, CancellationToken cancellationToken = default)
+    {
+        var error = new ClavenarTransportException(message);
+        if (_opts.Mode == Mode.Enforce)
+        {
+            throw error;
+        }
+
+        if (_opts.OnPolicyError is not null)
+        {
+            await _opts.OnPolicyError(
+                error,
+                new VerdictContext("<provider-stream>", "<unknown>", null),
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
 }

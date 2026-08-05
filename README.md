@@ -18,17 +18,17 @@ Part of the by-language agent-wrapper SDK family alongside
 dotnet nuget add source https://nuget.pkg.github.com/clavenar/index.json \
   --name clavenar --username YOUR_GITHUB_USER --password YOUR_GITHUB_TOKEN \
   --store-password-in-clear-text
-dotnet add package Clavenar.AgentSdk --version 1.6.1 --source clavenar
+dotnet add package Clavenar.AgentSdk --version 1.6.2 --source clavenar
 ```
 
 The token needs `read:packages`. The exact `.nupkg` and symbols package are
 also attached anonymously to the versioned GitHub release.
 
 ```bash
-base=https://github.com/clavenar/clavenar-dotnet-sdk/releases/download/v1.6.1
-curl -fsSLO "$base/Clavenar.AgentSdk.1.6.1.nupkg"
-curl -fsSLO "$base/Clavenar.AgentSdk.1.6.1.snupkg"
-unzip -t Clavenar.AgentSdk.1.6.1.nupkg
+base=https://github.com/clavenar/clavenar-dotnet-sdk/releases/download/v1.6.2
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.2.nupkg"
+curl -fsSLO "$base/Clavenar.AgentSdk.1.6.2.snupkg"
+unzip -t Clavenar.AgentSdk.1.6.2.nupkg
 ```
 
 Targets `net8.0`. The only dependency is the in-box `System.Text.Json`;
@@ -155,6 +155,28 @@ catch (ClavenarPendingException pending)
     await pending.ResolveAsync(); // returns on approve, throws ClavenarDeniedException on deny
 }
 ```
+
+Pending polling treats only network failures and 5xx responses as transient.
+Malformed success bodies, correlation mismatches, and every other HTTP status
+are terminal transport errors.
+
+## Governed execution
+
+Use `GovernedExecutionClient` when policy authorization and the provider effect
+must form a recoverable workflow. Supply an application-owned
+`IDurableExecutionStore`, a cryptographic `IAuthorizationVerifier`, a receipt
+signer, and an executor that forwards the supplied idempotency ID to the
+provider. The client verifies all authorization bindings before committing an
+intent or releasing an effect.
+
+On restart, a stored completion is integrity-checked and returned. A stored
+intent is passed to the optional `IEffectRecoverer`; if it cannot conclusively
+find the provider effect, the client throws
+`ClavenarRecoveryRequiredException` instead of replaying it. Completion plus
+receipt-outbox persistence is bounded by the configured finalization deadline.
+
+`SecureTransportProfile` reuses its connection pool. Call `Reload()` after
+rotating credential files and dispose the profile during application shutdown.
 
 ## Streaming
 

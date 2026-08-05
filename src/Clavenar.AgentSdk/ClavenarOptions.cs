@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 public sealed record ClavenarOptions
 {
     private static readonly HttpClient SharedClient = new();
+    private static readonly TimeSpan MaxTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(1);
 
     public required string Endpoint { get; init; }
 
@@ -26,8 +28,13 @@ public sealed record ClavenarOptions
     /// <summary>An HTTP client to use; a shared default is used when null.</summary>
     public HttpClient? HttpClient { get; init; }
 
-    /// <summary>Reusable reload-before-request secure transport profile.</summary>
+    /// <summary>Reusable cached secure transport profile with explicit credential reload.</summary>
     public SecureTransportProfile? SecureTransport { get; init; }
+
+    /// <summary>
+    /// Permit credentials over HTTP only for an explicit 127.0.0.1 / ::1 DEV endpoint.
+    /// </summary>
+    public bool AllowInsecureLoopback { get; init; }
 
     /// <summary>Fires per inspected call before any deny→throw translation, in both modes.</summary>
     public Func<Verdict, VerdictContext, CancellationToken, Task>? OnVerdict { get; init; }
@@ -44,7 +51,7 @@ public sealed record ClavenarOptions
     internal HttpClient EffectiveClient => HttpClient ?? SharedClient;
 
     internal (HttpClient Client, bool Owned) AcquireClient() =>
-        SecureTransport is null ? (EffectiveClient, false) : (SecureTransport.CreateClient(), true);
+        SecureTransport is null ? (EffectiveClient, false) : (SecureTransport.Client(), false);
 
     internal string? EffectiveToken => SecureTransport?.Token() ?? Token;
 
@@ -57,14 +64,45 @@ public sealed record ClavenarOptions
             throw new ClavenarConfigException("clavenar: Endpoint is required");
         }
 
-        if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out _))
+        if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out var endpoint)
+            || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps)
+            || !string.IsNullOrEmpty(endpoint.UserInfo)
+            || !string.IsNullOrEmpty(endpoint.Query)
+            || !string.IsNullOrEmpty(endpoint.Fragment))
         {
-            throw new ClavenarConfigException($"clavenar: Endpoint is not a valid absolute URL: {Endpoint}");
+            throw new ClavenarConfigException(
+                $"clavenar: Endpoint must be an absolute HTTP(S) URL without credentials, query, or fragment: {Endpoint}");
         }
 
-        if (Timeout <= TimeSpan.Zero)
+        bool hasCredentials = Token is not null || SecureTransport is not null;
+        bool exactLoopback = endpoint.Host == "127.0.0.1" || endpoint.Host is "::1" or "[::1]";
+        if (hasCredentials
+            && endpoint.Scheme != Uri.UriSchemeHttps
+            && (!AllowInsecureLoopback || !exactLoopback))
         {
-            throw new ClavenarConfigException("clavenar: Timeout must be positive");
+            throw new ClavenarConfigException(
+                "clavenar: credentials require HTTPS; insecure transport is allowed only for an explicit loopback DEV endpoint");
+        }
+
+        if (Timeout <= TimeSpan.Zero || Timeout > MaxTimeout)
+        {
+            throw new ClavenarConfigException("clavenar: Timeout must be in (0, 5 minutes]");
+        }
+
+        if (Token is not null
+            && (string.IsNullOrWhiteSpace(Token) || Token.Contains('\r') || Token.Contains('\n')))
+        {
+            throw new ClavenarConfigException("clavenar: Token must be non-empty and single-line");
+        }
+
+        if (Retry is null || Retry.MaxAttempts < 1 || Retry.MaxAttempts > 10)
+        {
+            throw new ClavenarConfigException("clavenar: Retry.MaxAttempts must be in [1, 10]");
+        }
+
+        if (Retry.BaseDelay < TimeSpan.Zero || Retry.BaseDelay > MaxRetryDelay)
+        {
+            throw new ClavenarConfigException("clavenar: Retry.BaseDelay must be in [0, 1 minute]");
         }
 
         if (SecureTransport is not null && (HttpClient is not null || Token is not null))

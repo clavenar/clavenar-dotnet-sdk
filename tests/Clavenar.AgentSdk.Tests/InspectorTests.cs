@@ -214,11 +214,19 @@ public class InspectorTests
         Assert.Equal("delete_user", e.ToolName);
     }
 
-    // Provider-shape drift: the turn declares tool use but the blocks aren't extractable. The
-    // call must pass through without hitting the gateway (fail-open by contract) while the
-    // shape-drift trace warning fires.
     [Fact]
-    public async Task InspectResponseWarnsWhenToolUseDeclaredButNothingExtracted()
+    public async Task InspectResponseRejectsMissingProviderCoreShape()
+    {
+        var h = new StubHandler((_, _) => throw new InvalidOperationException(
+            "gateway must not be contacted when provider shape is missing"));
+
+        await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => new ClavenarInspector(Fixtures.Opts(h)).InspectResponseAsync(new { id = "response_1" }));
+    }
+
+    // Provider-shape drift fails closed in enforce mode.
+    [Fact]
+    public async Task InspectResponseFailsClosedWhenToolUseDeclaredButNothingExtracted()
     {
         var h = new StubHandler((_, _) => throw new InvalidOperationException(
             "gateway must not be contacted when extraction yields zero calls"));
@@ -230,18 +238,35 @@ public class InspectorTests
                 new { type = "tool_use_v2", id = "toolu_1", name = "delete_user", input = new { } },
             },
         };
-        var listener = new CollectingTraceListener();
-        Trace.Listeners.Add(listener);
-        try
-        {
-            await new ClavenarInspector(Fixtures.Opts(h)).InspectResponseAsync(resp);
-        }
-        finally
-        {
-            Trace.Listeners.Remove(listener);
-        }
+        await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => new ClavenarInspector(Fixtures.Opts(h)).InspectResponseAsync(resp));
+    }
 
-        Assert.Contains(listener.Messages, m => m.Contains("may have drifted"));
+    [Fact]
+    public async Task InspectResponseReportsShapeDriftAndPassesInObserve()
+    {
+        var h = new StubHandler((_, _) => throw new InvalidOperationException(
+            "gateway must not be contacted when extraction fails"));
+        object resp = new
+        {
+            stop_reason = "tool_use",
+            content = new object[]
+            {
+                new { type = "tool_use_v2", id = "toolu_1", name = "delete_user", input = new { } },
+            },
+        };
+        var errors = new List<string>();
+        var opts = Fixtures.Opts(h) with
+        {
+            Mode = Mode.Observe,
+            OnPolicyError = (error, _, _) =>
+            {
+                errors.Add(error.Message);
+                return Task.CompletedTask;
+            },
+        };
+        await new ClavenarInspector(opts).InspectResponseAsync(resp);
+        Assert.Single(errors);
     }
 
     [Theory]

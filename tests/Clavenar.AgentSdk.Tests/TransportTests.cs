@@ -22,6 +22,27 @@ public class TransportTests
     }
 
     [Fact]
+    public async Task ArbitraryAllowBodyFailsClosed()
+    {
+        var h = new StubHandler((_, _) => StubResponse.Of(
+            200,
+            "{\"verdict\":\"allow\",\"unexpected\":true}"));
+        var error = await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => Inspect(Fixtures.Opts(h)));
+        Assert.Equal(200, error.Status);
+    }
+
+    [Fact]
+    public async Task OversizedResponseFailsBeforeParsing()
+    {
+        var h = new StubHandler((_, _) => StubResponse.Of(200, new string('x', (1024 * 1024) + 1)));
+        var error = await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => Inspect(Fixtures.Opts(h)));
+        Assert.Equal(200, error.Status);
+        Assert.Contains("exceeded", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Deny()
     {
         const string body =
@@ -55,14 +76,13 @@ public class TransportTests
     }
 
     [Fact]
-    public async Task PendingHeaderWins()
+    public async Task PendingHeaderBodyMismatchFailsClosed()
     {
         const string body = "{\"status\":\"pending\",\"correlation_id\":\"cb\",\"review_reasons\":[\"x\"]}";
         var h = new StubHandler((_, _) => new StubResponse { Status = 202, Body = body, CorrelationId = "ch" });
-        var v = await Inspect(Fixtures.Opts(h));
-        Assert.Equal(VerdictKind.Pending, v.Kind);
-        Assert.Equal("ch", v.CorrelationId);
-        Assert.Equal(new[] { "x" }, v.ReviewReasons);
+        var error = await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => Inspect(Fixtures.Opts(h)));
+        Assert.Equal(202, error.Status);
     }
 
     [Fact]
@@ -202,7 +222,7 @@ public class TransportTests
     public async Task MaxAttemptsBelowOne()
     {
         var h = new StubHandler((_, _) => StubResponse.Of(200));
-        var e = await Assert.ThrowsAsync<ClavenarTransportException>(
+        var e = await Assert.ThrowsAsync<ClavenarConfigException>(
             () => Inspect(Fixtures.Opts(h) with { Retry = new RetryOptions(0, TimeSpan.FromMilliseconds(1)) }));
         Assert.Contains("MaxAttempts", e.Message, StringComparison.Ordinal);
     }
@@ -218,7 +238,12 @@ public class TransportTests
             capturedBody = body;
             return StubResponse.Of(200);
         });
-        await new ClavenarInspector(Fixtures.Opts(h) with { Token = "tok" }).InspectAsync(Fixtures.SampleCall());
+        await new ClavenarInspector(Fixtures.Opts(h) with
+        {
+            Endpoint = "http://127.0.0.1",
+            Token = "tok",
+            AllowInsecureLoopback = true,
+        }).InspectAsync(Fixtures.SampleCall());
 
         Assert.Equal(HttpMethod.Post, captured!.Method);
         Assert.Equal("/mcp", captured.RequestUri!.AbsolutePath);

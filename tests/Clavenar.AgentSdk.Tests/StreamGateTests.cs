@@ -52,7 +52,7 @@ public class StreamGateTests
         var gate = new StreamGate(Fixtures.Opts(h));
         gate.Start("0", "toolu_1", "f");
         gate.Update("0", null, null, "not json");
-        await Assert.ThrowsAsync<ClavenarConfigException>(() => gate.CloseAsync("0"));
+        await Assert.ThrowsAsync<ClavenarTransportException>(() => gate.CloseAsync("0"));
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class StreamGateTests
         var h = new StubHandler((_, _) => StubResponse.Of(200));
         var gate = new StreamGate(Fixtures.Opts(h));
         gate.Update("0", null, null, "{\"a\":1}");
-        await Assert.ThrowsAsync<ClavenarConfigException>(() => gate.CloseAsync("0"));
+        await Assert.ThrowsAsync<ClavenarTransportException>(() => gate.CloseAsync("0"));
     }
 
     [Fact]
@@ -95,5 +95,29 @@ public class StreamGateTests
         gate.Update("0", null, null, "{}");
         await gate.CloseAsync("0");
         Assert.Equal(new[] { VerdictKind.Deny }, kinds);
+    }
+
+    [Fact]
+    public async Task TerminalWithoutBufferFailsClosed()
+    {
+        var gate = new StreamGate(Fixtures.Opts(new StubHandler((_, _) => StubResponse.Of(200))));
+        await Assert.ThrowsAsync<ClavenarTransportException>(() => gate.CloseAsync("missing"));
+    }
+
+    [Fact]
+    public async Task TerminalWithoutBufferReportsAndPassesInObserve()
+    {
+        var errors = new List<string>();
+        var opts = Fixtures.Opts(new StubHandler((_, _) => StubResponse.Of(200))) with
+        {
+            Mode = Mode.Observe,
+            OnPolicyError = (error, _, _) =>
+            {
+                errors.Add(error.Message);
+                return Task.CompletedTask;
+            },
+        };
+        await new StreamGate(opts).CloseAsync("missing");
+        Assert.Single(errors);
     }
 }

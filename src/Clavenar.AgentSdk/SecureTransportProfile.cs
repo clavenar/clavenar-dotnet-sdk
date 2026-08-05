@@ -18,10 +18,15 @@ public enum SecureProxyMode
 }
 
 /// <summary>
-/// One reusable reload-before-request mTLS, token, deadline, and proxy profile.
+/// One reusable cached mTLS, token, deadline, and proxy profile with explicit rotation.
 /// </summary>
-public sealed record SecureTransportProfile
+public sealed class SecureTransportProfile : IDisposable
 {
+    private static readonly TimeSpan MaxTimeout = TimeSpan.FromMinutes(5);
+    private readonly object _gate = new();
+    private TransportSnapshot? _snapshot;
+    private bool _disposed;
+
     public required string CaBundlePath { get; init; }
 
     public required string ClientCertificatePath { get; init; }
@@ -38,14 +43,71 @@ public sealed record SecureTransportProfile
 
     public Uri? ProxyUri { get; init; }
 
-    internal HttpClient CreateClient()
+    internal HttpClient Client()
+    {
+        lock (_gate)
+        {
+            EnsureNotDisposed();
+            _snapshot ??= CreateSnapshot();
+            return _snapshot.Client;
+        }
+    }
+
+    /// <summary>Atomically replace the cached client after rotating credential files.</summary>
+    public void Reload()
+    {
+        lock (_gate)
+        {
+            EnsureNotDisposed();
+        }
+
+        var next = CreateSnapshot();
+        TransportSnapshot? previous;
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                next.Dispose();
+                throw new ObjectDisposedException(nameof(SecureTransportProfile));
+            }
+
+            previous = _snapshot;
+            _snapshot = next;
+        }
+
+        previous?.Dispose();
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        TransportSnapshot? previous;
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            previous = _snapshot;
+            _snapshot = null;
+        }
+
+        previous?.Dispose();
+    }
+
+    private TransportSnapshot CreateSnapshot()
     {
         Validate();
+        X509Certificate2? identity = null;
+        X509Certificate2Collection? roots = null;
+        SocketsHttpHandler? handler = null;
         try
         {
-            var identity =
+            identity =
                 X509Certificate2.CreateFromPemFile(ClientCertificatePath, PrivateKeyPath);
-            var roots = new X509Certificate2Collection();
+            roots = new X509Certificate2Collection();
             roots.ImportFromPem(File.ReadAllText(CaBundlePath));
             if (roots.Count == 0)
             {
@@ -54,7 +116,7 @@ public sealed record SecureTransportProfile
             }
 
             var clientCertificates = new X509CertificateCollection { identity };
-            var handler = new SocketsHttpHandler
+            handler = new SocketsHttpHandler
             {
                 ConnectTimeout = ConnectTimeout,
                 SslOptions = new SslClientAuthenticationOptions
@@ -66,7 +128,12 @@ public sealed record SecureTransportProfile
                 },
             };
             ConfigureProxy(handler);
-            return new HttpClient(handler, disposeHandler: true) { Timeout = RequestTimeout };
+            var client = new HttpClient(handler, disposeHandler: true) { Timeout = RequestTimeout };
+            var snapshot = new TransportSnapshot(client, identity, roots);
+            handler = null;
+            identity = null;
+            roots = null;
+            return snapshot;
         }
         catch (ClavenarConfigException)
         {
@@ -80,10 +147,23 @@ public sealed record SecureTransportProfile
             throw new ClavenarConfigException(
                 $"cannot build secure transport profile: {error.Message}");
         }
+        finally
+        {
+            handler?.Dispose();
+            identity?.Dispose();
+            if (roots is not null)
+            {
+                foreach (var root in roots)
+                {
+                    root.Dispose();
+                }
+            }
+        }
     }
 
     internal string? Token()
     {
+        EnsureNotDisposed();
         var token = TokenSource?.Invoke();
         if (token is null)
         {
@@ -97,14 +177,24 @@ public sealed record SecureTransportProfile
                 "secure transport token source returned an empty token");
         }
 
+        if (token.Contains('\r') || token.Contains('\n'))
+        {
+            throw new ClavenarConfigException(
+                "secure transport token source returned a multi-line token");
+        }
+
         return token;
     }
 
     internal void Validate()
     {
-        if (ConnectTimeout <= TimeSpan.Zero || RequestTimeout <= TimeSpan.Zero)
+        if (ConnectTimeout <= TimeSpan.Zero
+            || RequestTimeout <= TimeSpan.Zero
+            || ConnectTimeout > MaxTimeout
+            || RequestTimeout > MaxTimeout)
         {
-            throw new ClavenarConfigException("secure transport timeouts must be positive");
+            throw new ClavenarConfigException(
+                "secure transport timeouts must be positive and no greater than 5 minutes");
         }
 
         foreach (
@@ -132,10 +222,19 @@ public sealed record SecureTransportProfile
             && (
                 ProxyUri is null
                 || !ProxyUri.IsAbsoluteUri
-                || (ProxyUri.Scheme != Uri.UriSchemeHttp && ProxyUri.Scheme != Uri.UriSchemeHttps)))
+                || (ProxyUri.Scheme != Uri.UriSchemeHttp && ProxyUri.Scheme != Uri.UriSchemeHttps)
+                || !string.IsNullOrEmpty(ProxyUri.UserInfo)
+                || !string.IsNullOrEmpty(ProxyUri.Query)
+                || !string.IsNullOrEmpty(ProxyUri.Fragment)))
         {
             throw new ClavenarConfigException(
                 "secure transport explicit proxy must use an absolute HTTP(S) URL");
+        }
+
+        if (ProxyMode != SecureProxyMode.Explicit && ProxyUri is not null)
+        {
+            throw new ClavenarConfigException(
+                "secure transport ProxyUri is valid only in Explicit mode");
         }
     }
 
@@ -178,5 +277,28 @@ public sealed record SecureTransportProfile
         chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
         chain.ChainPolicy.CustomTrustStore.AddRange(roots);
         return chain.Build(leaf);
+    }
+
+    private void EnsureNotDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    private sealed class TransportSnapshot(
+        HttpClient client,
+        X509Certificate2 identity,
+        X509Certificate2Collection roots) : IDisposable
+    {
+        public HttpClient Client { get; } = client;
+
+        public void Dispose()
+        {
+            Client.Dispose();
+            identity.Dispose();
+            foreach (var root in roots)
+            {
+                root.Dispose();
+            }
+        }
     }
 }

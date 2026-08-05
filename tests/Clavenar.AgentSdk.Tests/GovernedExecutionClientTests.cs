@@ -27,7 +27,8 @@ public sealed class GovernedExecutionClientTests
             "payments-provider",
             new Executor(order),
             store,
-            new Signer());
+            new Signer(),
+            new Verifier());
         var prepared = GovernedExecutionClient.Restore(
             IdempotencyId,
             "payments.transfer",
@@ -60,7 +61,8 @@ public sealed class GovernedExecutionClientTests
             "payments-provider",
             executor,
             new RecordingStore(order, failIntent: true),
-            new Signer());
+            new Signer(),
+            new Verifier());
         var prepared = GovernedExecutionClient.Restore(
             IdempotencyId,
             "payments.transfer",
@@ -86,7 +88,8 @@ public sealed class GovernedExecutionClientTests
             "payments-provider",
             executor,
             new RecordingStore(new List<string>()),
-            new Signer());
+            new Signer(),
+            new Verifier());
         var prepared = GovernedExecutionClient.Restore(
             IdempotencyId,
             "payments.transfer",
@@ -97,6 +100,92 @@ public sealed class GovernedExecutionClientTests
 
         Assert.Equal(1, decisions);
         Assert.Equal(1, executor.Calls);
+    }
+
+    [Fact]
+    public async Task AuthorizationVerificationFailsBeforeIntentAndEffect()
+    {
+        var handler = new StubHandler((_, body) => StubResponse.Of(200, Authorization(body)));
+        var order = new List<string>();
+        var executor = new Executor(order);
+        var store = new RecordingStore(order);
+        var verifier = new Verifier(fail: true);
+        var client = new GovernedExecutionClient(
+            Fixtures.Opts(handler),
+            "payments-provider",
+            executor,
+            store,
+            new Signer(),
+            verifier);
+
+        await Assert.ThrowsAsync<ClavenarConfigException>(() => client.ExecutePreparedAsync(
+            GovernedExecutionClient.Restore(
+                IdempotencyId,
+                "payments.transfer",
+                JsonNode.Parse("{\"amount\":100}"))));
+
+        Assert.True(verifier.Called);
+        Assert.False(executor.Called);
+        Assert.Null(store.Intent);
+    }
+
+    [Fact]
+    public async Task CallbackMutationCannotChangeAuthorizationOrReceipt()
+    {
+        var handler = new StubHandler((_, body) => StubResponse.Of(200, Authorization(body)));
+        var order = new List<string>();
+        var store = new RecordingStore(order);
+        var client = new GovernedExecutionClient(
+            Fixtures.Opts(handler),
+            "payments-provider",
+            new Executor(order),
+            store,
+            new MutatingSigner(),
+            new MutatingVerifier());
+
+        var outcome = await client.ExecutePreparedAsync(GovernedExecutionClient.Restore(
+            IdempotencyId,
+            "payments.transfer",
+            JsonNode.Parse("{\"amount\":100}")));
+
+        Assert.Equal(
+            "payments-agent",
+            (string?)store.Intent!["authorization"]!["authorization"]!["agent_id"]);
+        Assert.Equal("payments-agent", (string?)outcome.Receipt["agent_id"]);
+    }
+
+    [Fact]
+    public async Task PersistedIntentRequiresConclusiveRecoveryWithoutReplayingEffect()
+    {
+        int decisions = 0;
+        var handler = new StubHandler((_, body) =>
+        {
+            decisions++;
+            return StubResponse.Of(200, Authorization(body));
+        });
+        var order = new List<string>();
+        var store = new RecordingStore(order);
+        var executor = new FailingExecutor();
+        var verifier = new Verifier();
+        var client = new GovernedExecutionClient(
+            Fixtures.Opts(handler),
+            "payments-provider",
+            executor,
+            store,
+            new Signer(),
+            verifier);
+        var prepared = GovernedExecutionClient.Restore(
+            IdempotencyId,
+            "payments.transfer",
+            JsonNode.Parse("{\"amount\":100}"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => client.ExecutePreparedAsync(prepared));
+        await Assert.ThrowsAsync<ClavenarRecoveryRequiredException>(
+            () => client.ExecutePreparedAsync(prepared));
+
+        Assert.Equal(1, decisions);
+        Assert.Equal(1, executor.Calls);
+        Assert.Equal(2, verifier.Calls);
     }
 
     private static string Authorization(string requestBody)
@@ -116,7 +205,8 @@ public sealed class GovernedExecutionClientTests
             ["method"] = "tools/call",
             ["tool_name"] = "payments.transfer",
             ["execution_payload"] = JsonNode.Parse(requestBody),
-            ["payload_sha256"] = "sha256:" + new string('2', 64),
+            ["payload_sha256"] =
+                "sha256:269123e546c75ec2df26ce4a52baeab92e58afdfabcb111c3e9069a37f78f1c5",
             ["decision_principal"] = new JsonObject { ["subject"] = "system:policy-brain" },
             ["modification_diff"] = null,
             ["policy_bundle"] = new JsonObject { ["schema_version"] = 1 },
@@ -177,6 +267,13 @@ public sealed class GovernedExecutionClientTests
 
         public JsonObject? Completion { get; private set; }
 
+        public JsonObject? Intent { get; private set; }
+
+        public Task<GovernedExecutionClient.ExecutionState> LoadExecutionAsync(
+            string idempotencyId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new GovernedExecutionClient.ExecutionState(Intent, Completion));
+
         public Task CommitIntentAsync(JsonObject intent, CancellationToken cancellationToken)
         {
             _order.Add("intent");
@@ -186,6 +283,7 @@ public sealed class GovernedExecutionClientTests
             }
 
             Assert.Equal("payments-provider", (string?)intent["executor_id"]);
+            Intent = (JsonObject)intent.DeepClone();
             return Task.CompletedTask;
         }
 
@@ -208,5 +306,54 @@ public sealed class GovernedExecutionClientTests
                 "ES256",
                 "sha256:" + new string('1', 64),
                 "signed"));
+    }
+
+    private sealed class MutatingSigner : GovernedExecutionClient.IReceiptSigner
+    {
+        public Task<GovernedExecutionClient.WorkloadSignature> SignAsync(
+            JsonObject unsignedReceipt,
+            CancellationToken cancellationToken)
+        {
+            unsignedReceipt["agent_id"] = "mutated-by-signer";
+            return Task.FromResult(new GovernedExecutionClient.WorkloadSignature(
+                "ES256",
+                "sha256:" + new string('1', 64),
+                "signed"));
+        }
+    }
+
+    private sealed class Verifier : GovernedExecutionClient.IAuthorizationVerifier
+    {
+        private readonly bool _fail;
+
+        public Verifier(bool fail = false) => _fail = fail;
+
+        public int Calls { get; private set; }
+
+        public bool Called => Calls > 0;
+
+        public Task VerifyAsync(
+            JsonObject signedAuthorization,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            if (_fail)
+            {
+                throw new InvalidOperationException("invalid authorization signature");
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class MutatingVerifier : GovernedExecutionClient.IAuthorizationVerifier
+    {
+        public Task VerifyAsync(
+            JsonObject signedAuthorization,
+            CancellationToken cancellationToken)
+        {
+            signedAuthorization["authorization"]!["agent_id"] = "mutated-by-verifier";
+            return Task.CompletedTask;
+        }
     }
 }

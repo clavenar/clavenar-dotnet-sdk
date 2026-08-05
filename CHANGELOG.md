@@ -5,6 +5,30 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-05
+
+### Added
+
+- Recoverable governed execution now loads durable state before authorization,
+  cryptographically verifies every new or stored authorization, restores a
+  completed outcome, and reconciles an ambiguous provider effect without
+  blindly executing it again. `ClavenarRecoveryRequiredException` identifies
+  intents whose effect cannot yet be reconciled.
+- `SecureTransportProfile.Reload()` atomically rotates a cached client and
+  `Dispose()` releases its connection pool and loaded certificates.
+
+### Changed
+
+- Provider shape drift, malformed terminal stream events, and malformed success
+  bodies fail closed in enforce mode while observe mode reports the error and
+  passes the provider response through.
+- Requests, responses, tool arguments, batches, retry settings, endpoints, and
+  pending correlation are validated and bounded. Credentials require HTTPS
+  unless explicitly enabled for an exact loopback DEV endpoint; pending polls
+  ignore only network and 5xx failures.
+- Canonical execution JSON accepts only the cross-language safe numeric subset,
+  uses UTF-16 object-key ordering, and bounds receipt finalization.
+
 ## [1.6.1] - 2026-07-28
 
 ### Changed

@@ -65,9 +65,11 @@ public sealed class ClavenarPendingException : ClavenarException
             {
                 view = await _pollOnce(cancellationToken).ConfigureAwait(false);
             }
-            catch (ClavenarTransportException e) when (e.Status != 401 && e.Status != 404)
+            catch (ClavenarTransportException e) when (
+                e.Status == 0 || (e.Status >= 500 && e.Status < 600))
             {
-                // 5xx / network: swallow and retry next tick. 401 / 404 propagate.
+                // Only 5xx / network errors are transient. Malformed 200 responses and all 4xx
+                // propagate immediately instead of being hidden until the deadline.
             }
 
             if (view?.Decision is { } decision)

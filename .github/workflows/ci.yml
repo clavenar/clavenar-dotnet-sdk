@@ -19,6 +19,14 @@ jobs:
         os: [self-hosted, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Prepare isolated .NET state
+        if: matrix.os == 'self-hosted'
+        run: |
+          state_root="$RUNNER_TEMP/dotnet-sdk-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir -p "$state_root/install" "$state_root/home" "$state_root/packages"
+          echo "DOTNET_INSTALL_DIR=$state_root/install" >> "$GITHUB_ENV"
+          echo "DOTNET_CLI_HOME=$state_root/home" >> "$GITHUB_ENV"
+          echo "NUGET_PACKAGES=$state_root/packages" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.423'
@@ -32,6 +40,13 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Prepare isolated .NET state
+        run: |
+          state_root="$RUNNER_TEMP/dotnet-sdk-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          mkdir -p "$state_root/install" "$state_root/home" "$state_root/packages"
+          echo "DOTNET_INSTALL_DIR=$state_root/install" >> "$GITHUB_ENV"
+          echo "DOTNET_CLI_HOME=$state_root/home" >> "$GITHUB_ENV"
+          echo "NUGET_PACKAGES=$state_root/packages" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.423'
@@ -39,9 +54,9 @@ jobs:
       - run: dotnet list package --vulnerable --include-transitive
       - name: SBOM (CycloneDX)
         run: |
-          dotnet tool install --global CycloneDX --version 6.2.0
-          export PATH="$PATH:$HOME/.dotnet/tools"
-          dotnet-CycloneDX Clavenar.AgentSdk.sln -o sbom
+          tool_root="$RUNNER_TEMP/dotnet-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB"
+          dotnet tool install --tool-path "$tool_root" CycloneDX --version 6.2.0
+          "$tool_root/dotnet-CycloneDX" Clavenar.AgentSdk.sln -o sbom
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom

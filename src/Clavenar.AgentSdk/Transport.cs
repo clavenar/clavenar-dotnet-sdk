@@ -423,10 +423,35 @@ internal static class Transport
                     $"clavenar 200 with unparseable body: {e.Message}", 200);
             }
 
-            if (obj is null || obj.Count != 1 || AsString(obj["verdict"]) != "allow")
+            bool legacyAllow =
+                obj is not null
+                && obj.Count == 1
+                && AsString(obj["verdict"]) == "allow";
+            bool contractAllow =
+                obj is not null
+                && obj.Count == 4
+                && AsString(obj["contract"]) == DecisionContract
+                && AsString(obj["decision"]) == "allow"
+                && !string.IsNullOrWhiteSpace(AsString(obj["correlation_id"]))
+                && obj["executable"] is JsonValue executable
+                && executable.TryGetValue<bool>(out bool executableValue)
+                && !executableValue;
+            if (!legacyAllow && !contractAllow)
             {
                 throw new ClavenarTransportException(
                     $"clavenar 200 with unexpected body shape: {Preview(body)}", 200);
+            }
+
+            if (contractAllow)
+            {
+                string bodyCorrelation = AsString(obj!["correlation_id"])!;
+                if (corr is not null && corr != bodyCorrelation)
+                {
+                    throw new ClavenarTransportException(
+                        "clavenar 200 correlation id header/body mismatch", 200);
+                }
+
+                corr ??= bodyCorrelation;
             }
         }
 

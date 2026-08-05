@@ -26,6 +26,8 @@ the project adheres to [Semantic Versioning](https://semver.org/).
   pending correlation are validated and bounded. Credentials require HTTPS
   unless explicitly enabled for an exact loopback DEV endpoint; pending polls
   ignore only network and 5xx failures.
+- Decision clients validate Lite's exact side-effect-free
+  `clavenar.decision/v1` allow envelope and its correlation binding.
 - Canonical execution JSON accepts only the cross-language safe numeric subset,
   uses UTF-16 object-key ordering, and bounds receipt finalization.
 - Cached secure transports retain their custom trust roots for the complete

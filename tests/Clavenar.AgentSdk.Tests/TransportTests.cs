@@ -22,6 +22,32 @@ public class TransportTests
     }
 
     [Fact]
+    public async Task ExactDecisionAllowEnvelope()
+    {
+        var h = new StubHandler((_, _) => StubResponse.Of(
+            200,
+            "{\"contract\":\"clavenar.decision/v1\",\"decision\":\"allow\",\"correlation_id\":\"decision-correlation\",\"executable\":false}"));
+        var v = await Inspect(Fixtures.Opts(h));
+        Assert.Equal(VerdictKind.Allow, v.Kind);
+        Assert.Equal("decision-correlation", v.CorrelationId);
+    }
+
+    [Fact]
+    public async Task DecisionAllowCorrelationMismatchFailsClosed()
+    {
+        var h = new StubHandler((_, _) => new StubResponse
+        {
+            Status = 200,
+            Body = "{\"contract\":\"clavenar.decision/v1\",\"decision\":\"allow\",\"correlation_id\":\"body-correlation\",\"executable\":false}",
+            CorrelationId = "header-correlation",
+        });
+        var error = await Assert.ThrowsAsync<ClavenarTransportException>(
+            () => Inspect(Fixtures.Opts(h)));
+        Assert.Equal(200, error.Status);
+        Assert.Contains("correlation id header/body mismatch", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ArbitraryAllowBodyFailsClosed()
     {
         var h = new StubHandler((_, _) => StubResponse.Of(

@@ -14,8 +14,8 @@ dotnet build -c Release            # --no-restore in CI
 dotnet format --verify-no-changes  # CI gates on this; run dotnet format to fix
 dotnet test -c Release             # --no-build in CI
 ```
-Pinned to the .NET 8 SDK via `global.json` (`rollForward: latestFeature`). CI
-runs the matrix on ubuntu / windows / macos, plus an `sbom` job
+Pinned to the exact .NET 8 SDK in `global.json` (`rollForward: disable`). CI
+runs the matrix on self-hosted Linux / Windows / macOS, plus an `sbom` job
 (`dotnet list package --vulnerable --include-transitive` + CycloneDX). The
 protected distribution workflow dispatches the exact csproj version and
 signed-BOM source SHA to the NuGet/GitHub release workflow.
@@ -34,21 +34,32 @@ opts)`. The SDK is an HTTP *client* of the gateway (example `Endpoint =
   - `Clavenar.cs` — static `InspectResponseAsync` facade (wrap-and-forget over a provider response).
   - `ClavenarOptions.cs` — config; `Endpoint` is `required`, plus `Token`, `Mode`, `DevMode`, `OnVerdict`/`OnPolicyError`, `Timeout`, `HttpClient`, and `Retry` (`RetryOptions`). Resolve tuning is separate — `ResolveOptions` passed to `ClavenarPendingException.ResolveAsync`.
   - `Transport.cs` — `System.Text.Json` HTTP transport; `Verdict.cs` / `VerdictKind.cs` / `VerdictDetail.cs` / `VerdictContext.cs` — verdict model.
+  - `GovernedExecutionClient.cs` — durable
+    `clavenar.server-execution/v1` intent/effect/completion orchestration and
+    uncertain-outcome recovery.
+  - `SecureTransportProfile.cs` — reloadable mTLS/token transport profile;
+    replaces the pooled client only after a complete valid credential snapshot.
   - `NormalizedToolCall.cs` — normalized `{name, id, arguments}`; throws `ClavenarConfigException` on unparseable args JSON.
   - `StreamGate.cs` — holds a tool call's closing event until a verdict returns (`Start`/`Update`/`CloseAsync`, `CloseByPrefixAsync`).
   - `Realtime.cs` — `Realtime.InspectAsync(FunctionCallDone, opts)` for realtime function-call events.
   - `DevMode.cs` / `Mode.cs` — stderr deny panel + enforce/observe enum.
-  - `ClavenarException.cs` + `ClavenarDeniedException` / `ClavenarPendingException` / `ClavenarRateLimitedException` / `ClavenarTransportException` / `ClavenarConfigException`.
+  - `ClavenarException.cs` + `ClavenarDeniedException` /
+    `ClavenarPendingException` / `ClavenarRateLimitedException` /
+    `ClavenarRecoveryRequiredException` / `ClavenarTransportException` /
+    `ClavenarConfigException`.
 - `tests/Clavenar.AgentSdk.Tests/` — xUnit; `InternalsVisibleTo` grants internal access. `StubHandler.cs` / `Fixtures.cs` back transport tests.
 - `examples/` — `semantic-kernel`, `native-openai`, `custom-dispatcher`, `realtime` (not packed/shipped).
 - `docs/` — `SEQUENCES.md` (streaming/pending flows), `PARITY.md` (TS map).
 
 ## Conventions & invariants
-- After adding or updating a feature, also update the relevant `MANUAL_TESTS*` file(s) when needed.
 - **Inspect before execute.** Every model `tool_use` must clear inspection before the agent runs it — that ordering is the SDK's whole contract. Don't add a path that dispatches a tool ahead of a verdict.
 - **Duck-typing shape guard.** `InspectResponseAsync` duck-types an Anthropic message (`content[]` with `type:"tool_use"`) or an OpenAI completion (`choices[].message.tool_calls[]`, filtered to `type:"function"`) via JSON, then forwards the extracted calls to `InspectAllAsync`. A response that yields *zero* extracted calls is a no-op — `InspectAllAsync` early-returns on `calls.Count == 0` — which is the correct outcome for a text-only turn (no `tool_use` / `tool_calls` to gate). Don't add a throw here; a model turn with no tool calls is normal, not a contract error. The one drift signal: a turn whose `stop_reason` / `finish_reason` declares tool use but extracts zero calls emits a `Trace.TraceWarning` (provider shape drift; the calls were not inspected).
 - **No provider dependency.** Only the in-box `System.Text.Json`. Never add a PackageReference to the OpenAI/Anthropic SDKs — duck-type the JSON instead. Keeps the supply-chain surface minimal.
 - **Fail-closed.** In enforce `Mode`, a transport failure throws `ClavenarTransportException` (`Status == 0` = network); it must not fall through to allow. `Mode.Observe` is the only non-blocking path — verdicts via `OnVerdict`, errors via `OnPolicyError`.
+- **Decision and execution retries are separate.** Side-effect-free decision
+  calls may retry transient transport failures. A durable execution is keyed by
+  its idempotency ID; an uncertain effect must recover state or raise
+  `ClavenarRecoveryRequiredException`, never blindly execute again.
 - **Verdict → exception mapping is load-bearing.** `Allow`/`Deny`/`Pending`/`RateLimited` from `InspectAsync`; enforce/batch paths raise `ClavenarDeniedException` (carries `Reasons`, `Layer`, `IntentCategory`, `CorrelationId`, optional per-detector `Detail`), `ClavenarPendingException` (`await ResolveAsync()`), `ClavenarRateLimitedException` (429 before evaluation; `Code` = `rate_limited`/`quota_exceeded`, optional `RetryAfterSecs`; a verdict — never retried), `ClavenarTransportException`, `ClavenarConfigException`.
 - **`DevMode = true` is dev/staging only.** It renders the detailed deny panel (per-detector scores) to stderr; detailed denials are an attacker oracle in prod. `Detail` is null unless the gateway opts in (`CLAVENAR_PROXY_VERBOSE_VERDICTS=true`).
 - **No secrets at rest.** Hold only `Endpoint` + optional bearer `Token`, supplied per process by the caller.

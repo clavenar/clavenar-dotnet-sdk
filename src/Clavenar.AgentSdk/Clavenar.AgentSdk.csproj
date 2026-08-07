@@ -12,7 +12,7 @@
     <Deterministic>true</Deterministic>
 
     <PackageId>Clavenar.AgentSdk</PackageId>
-    <Version>1.6.2</Version>
+    <Version>1.6.3</Version>
     <Authors>Vanteguard Labs</Authors>
     <Description>Wrap your Anthropic / OpenAI client. Every tool call is inspected by Clavenar before it runs.</Description>
     <PackageProjectUrl>https://clavenar.com</PackageProjectUrl>

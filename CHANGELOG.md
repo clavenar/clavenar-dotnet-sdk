@@ -5,6 +5,13 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-08
+
+### Changed
+
+- Correct the published SDK guidance to match the exact pinned .NET SDK
+  policy: `global.json` disables roll-forward.
+
 ## [1.6.2] - 2026-08-05
 
 ### Added

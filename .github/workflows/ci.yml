@@ -74,3 +74,4 @@ jobs:
         with:
           name: sbom
           path: sbom/
+          if-no-files-found: error

@@ -5,6 +5,13 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-08-09
+
+### Changed
+
+- Keep archive builds warning-clean when Git metadata is intentionally absent,
+  and make protected NuGet publication idempotent without duplicate warnings.
+
 ## [1.6.3] - 2026-08-08
 
 ### Changed

@@ -71,7 +71,7 @@ await Clavenar.InspectResponseAsync(completion, opts); // throws on a denied too
 (`Allow` / `Deny` / `Pending` / `RateLimited`). The batch / enforce
 paths explicitly select side-effect-free `clavenar.decision/v1`; the UUID is
 allocated before the first attempt and a multi-tool turn uses one ordered
-atomic decision. Proxy 0.5.0 and Lite 0.9.0 reject unselected tool calls with
+atomic decision. Proxy 1.0.0 and Lite 1.0.0 reject unselected tool calls with
 HTTP 426; upgrade this SDK before the gateway by following
 <https://clavenar.com/docs/sdk-migration/>. They translate, in enforce mode, to exceptions rooted at
 `ClavenarException`:

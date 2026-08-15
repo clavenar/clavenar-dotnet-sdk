@@ -5,6 +5,13 @@ the project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-08-15
+
+### Changed
+
+- Bind protected stack publication to the current reviewed security and
+  release-contract source.
+
 ## [1.6.4] - 2026-08-09
 
 ### Changed

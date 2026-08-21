@@ -15,8 +15,9 @@ dotnet format --verify-no-changes  # CI gates on this; run dotnet format to fix
 dotnet test -c Release             # --no-build in CI
 ```
 Pinned to the exact .NET 8 SDK in `global.json` (`rollForward: disable`). CI
-runs the matrix on self-hosted Linux / Windows / macOS, plus an `sbom` job
-(`dotnet list package --vulnerable --include-transitive` + CycloneDX). The
+runs on self-hosted Linux plus GitHub-hosted `windows-latest` and
+`macos-latest`, plus a self-hosted `sbom` job (`dotnet list package
+--vulnerable --include-transitive` + CycloneDX). The
 protected distribution workflow dispatches the exact csproj version and
 signed-BOM source SHA to the NuGet/GitHub release workflow.
 
@@ -49,6 +50,9 @@ opts)`. The SDK is an HTTP *client* of the gateway (example `Endpoint =
     `ClavenarConfigException`.
 - `tests/Clavenar.AgentSdk.Tests/` — xUnit; `InternalsVisibleTo` grants internal access. `StubHandler.cs` / `Fixtures.cs` back transport tests.
 - `examples/` — `semantic-kernel`, `native-openai`, `custom-dispatcher`, `realtime` (not packed/shipped).
+- `fixtures/` — byte-identical `client-migration-v1` and `retry-separation-v1`
+  (plus `sdk-cross-language-v1`) contracts; packed into the NuGet artifact and
+  asserted by fixture tests.
 - `docs/` — `SEQUENCES.md` (streaming/pending flows), `PARITY.md` (TS map).
 
 ## Conventions & invariants

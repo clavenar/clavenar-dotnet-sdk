@@ -8,11 +8,17 @@ Sibling of the TypeScript (`@clavenar/agent-sdk`) and Python
 TS reference 1:1.
 
 ## Build, test, lint
-```
+```bash
 dotnet restore
 dotnet build -c Release            # --no-restore in CI
 dotnet format --verify-no-changes  # CI gates on this; run dotnet format to fix
 dotnet test -c Release             # --no-build in CI
+dotnet list package --vulnerable --include-transitive
+validation_root="$(mktemp -d)"
+trap 'rm -rf "$validation_root"' EXIT
+dotnet tool install --tool-path "$validation_root/tools" CycloneDX --version 6.2.0
+"$validation_root/tools/dotnet-CycloneDX" Clavenar.AgentSdk.sln -o "$validation_root/sbom"
+dotnet pack --no-build -c Release -o artifacts
 ```
 Pinned to the exact .NET 8 SDK in `global.json` (`rollForward: disable`). CI
 runs on self-hosted Linux plus GitHub-hosted `windows-latest` and
@@ -78,4 +84,7 @@ C# / .NET rules that bite here:
 - Commit subjects must start with a lowercase letter.
 
 ## Pointers
-README.md · SECURITY.md · CONTRIBUTING.md · docs/SEQUENCES.md · docs/PARITY.md
+
+[README](README.md) · [security policy](SECURITY.md) ·
+[contributing](CONTRIBUTING.md) · [sequence diagrams](docs/SEQUENCES.md) ·
+[SDK parity](docs/PARITY.md).
